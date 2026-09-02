@@ -1,0 +1,52 @@
+=== post-fix: 40 turn-end samples, away mode ON, daemon supervising ===
+01  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=5s
+02  allowed  daemon=alive watcher=live    watcher_pid=2360    beacon=0s
+03  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+04  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+05  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=2s
+06  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+07  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+08  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+09  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+10  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=2s
+11  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+12  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+13  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+14  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+15  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+16  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+17  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=2s
+18  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+19  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+20  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=0s
+21  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+22  allowed  daemon=alive watcher=live    watcher_pid=5083    beacon=1s
+23  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+24  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=2s
+25  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=2s
+26  allowed  daemon=alive watcher=no-lock watcher_pid=-       beacon=3s
+27  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+28  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+29  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+30  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+31  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+32  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+33  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+34  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+35  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+36  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+37  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+38  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+39  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=0s
+40  allowed  daemon=alive watcher=live    watcher_pid=17878   beacon=1s
+--- post-fix: 0/40 turn-end samples BLOCKED, 40 allowed
+--- distinct watcher pids seen while the daemon supervised: - 2360 5083 17878
+
+=== post-fix: genuine lapse control - kill the daemon and its watcher, away mode still ON ===
+daemon alive: no   watcher alive: no-lock   beacon age: 0s   away mode: on
+guard exit=2 (2 = blocked)
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+  | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 0s ago).
+  | ●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

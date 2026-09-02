@@ -1,0 +1,23 @@
+The seven new cases in tests/fm-turnend-guard.test.sh, run one at a time against
+the base commit d22318e (post-fix test file, pre-fix bin/) and against the target
+commit d9d25fb. The two positives are the reported false alarm and fail before
+the fix; the five negatives already pass before it, which is what proves the fix
+did not weaken genuine blind-turn detection.
+
+--- base d22318e (pre-fix bin/, new tests) ---
+not ok - away mode with a live daemon must not block between watcher cycles: expected exit 0, got 2
+not ok - a live away-mode daemon must outweigh a watcher lock its exited child left behind: expected exit 0, got 2
+ok - fm-turnend-guard: away mode with no daemon and no watcher still blocks
+ok - fm-turnend-guard: away mode blocks on a dead away-mode daemon
+ok - fm-turnend-guard: away mode blocks on a pid-reused away-mode daemon lock
+ok - fm-turnend-guard: away-mode daemon ownership never substitutes for a fresh beacon
+ok - fm-turnend-guard: a daemon lock proves nothing while away mode is off
+
+--- target d9d25fb ---
+ok - fm-turnend-guard: a live away-mode daemon satisfies supervision with no watcher holding the lock
+ok - fm-turnend-guard: away-mode daemon ownership survives a leftover dead watcher lock
+ok - fm-turnend-guard: away mode with no daemon and no watcher still blocks
+ok - fm-turnend-guard: away mode blocks on a dead away-mode daemon
+ok - fm-turnend-guard: away mode blocks on a pid-reused away-mode daemon lock
+ok - fm-turnend-guard: away-mode daemon ownership never substitutes for a fresh beacon
+ok - fm-turnend-guard: a daemon lock proves nothing while away mode is off

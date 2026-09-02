@@ -1,0 +1,14 @@
+=== post-fix: away-mode daemon started with an unreadable ps ===
+daemon alive: yes
+daemon lock records pid-identity: no
+daemon log:
+  | [2026-09-02T15:46:24-0600] warn: could not record this daemon's process identity; the turn-end guard cannot recognize away-mode supervision
+  | [2026-09-02T15:46:24-0600] daemon starting (pid 46183); target=fakepane; target_source=FM_SUPERVISOR_TARGET; backend=tmux; backend_source=FM_SUPERVISOR_BACKEND; afk=on; inject_skip='all'; stale_escalate=240s; batch=90s
+  | [2026-09-02T15:46:27-0600] wake: signal: /private/var/folders/c7/xbqg0t0s0bnbht6fw7_qf9km0000gn/T/fm-afk-noident-post-fix.tcLd8x/state/task1.status
+  | [2026-09-02T15:46:29-0600] self-handle: signal: /private/var/folders/c7/xbqg0t0s0bnbht6fw7_qf9km0000gn/T/fm-afk-noident-post-fix.tcLd8x/state/task1.status -> routine signal: task1.status: working: x
+turn-end guard at the hand-off, away mode ON, no recorded identity: exit=2 (BLOCKED)
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+  | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 0s ago).
+  | ●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

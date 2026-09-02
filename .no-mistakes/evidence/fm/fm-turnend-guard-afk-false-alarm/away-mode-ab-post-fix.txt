@@ -1,0 +1,13 @@
+=== post-fix / A: away mode ON, daemon owns supervision, no watcher process ===
+away mode: ON | daemon pid 55646 alive: yes | watcher lock: none (hand-off) | beacon: fresh
+guard exit=0  ->  allowed
+
+=== post-fix / B: same daemon, same lock, away mode OFF ===
+away mode: OFF | daemon pid 55646 alive: yes | watcher lock: none (hand-off) | beacon: fresh
+guard exit=2  ->  BLOCKED
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+  | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 0s ago).
+  | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+

@@ -1,0 +1,64 @@
+=== pre-fix: 40 turn-end samples, away mode ON, daemon supervising ===
+01  allowed  daemon=alive watcher=live    watcher_pid=64610   beacon=0s
+02  allowed  daemon=alive watcher=live    watcher_pid=64610   beacon=1s
+03  allowed  daemon=alive watcher=live    watcher_pid=64610   beacon=0s
+04  BLOCKED  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+         | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+         | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 1s ago).
+05  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+06  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+07  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+08  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+09  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+10  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+11  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+12  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+13  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+14  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+15  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+16  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+17  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+18  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+19  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+20  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=1s
+21  allowed  daemon=alive watcher=live    watcher_pid=67979   beacon=0s
+22  BLOCKED  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+         | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+         | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 1s ago).
+23  BLOCKED  daemon=alive watcher=no-lock watcher_pid=-       beacon=1s
+         | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+         | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 1s ago).
+24  BLOCKED  daemon=alive watcher=no-lock watcher_pid=-       beacon=2s
+         | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+         | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+         | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 2s ago).
+25  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+26  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+27  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+28  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+29  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+30  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+31  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+32  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+33  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=2s
+34  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+35  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+36  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+37  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+38  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+39  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=0s
+40  allowed  daemon=alive watcher=live    watcher_pid=80527   beacon=1s
+--- pre-fix: 4/40 turn-end samples BLOCKED, 36 allowed
+--- distinct watcher pids seen while the daemon supervised: 64610 - 67979 80527
+
+=== pre-fix: genuine lapse control - kill the daemon and its watcher, away mode still ON ===
+daemon alive: no   watcher alive: no-lock   beacon age: 0s   away mode: on
+guard exit=2 (2 = blocked)
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  | ●  TURN WOULD END BLIND - SUPERVISION IS OFF
+  | ●  1 task(s) in flight, but no live watcher holds this home lock (last beat: 0s ago).
+  | ●  Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.
+  | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
