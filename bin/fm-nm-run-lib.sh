@@ -179,10 +179,25 @@ fm_nm_custody_max_age_secs() {
   printf '%s' "$v"
 }
 
-# Epoch seconds for the local "<YYYY-MM-DD> <HH:MM>" date pair that opens $1,
-# the remainder of a `no-mistakes runs` row after its short sha. That list is
-# the only run-age evidence either caller can read: `axi status` carries no
+# Epoch seconds for the "<YYYY-MM-DD> <HH:MM>" date pair that opens $1, the
+# remainder of a `no-mistakes runs` row after its short sha. That list is the
+# only run-age evidence either caller can read: `axi status` carries no
 # timestamp at all. Prints nothing and returns 1 when $1 has no parseable date.
+#
+# The pair is LOCAL wall-clock time, which is why both `date` forms below parse
+# it bare. That is verified, not assumed: checked 2026-09-02 against the
+# installed no-mistakes v1.57.0, whose `no-mistakes runs --limit 3` printed as
+# its newest row
+#   running fm/fm-crewstate-pipeline-exemption-bugs ef09b316 2026-09-02 16:12
+# while the local clock read 2026-09-02 16:49 MDT and the UTC clock read
+# 2026-09-02 22:49 UTC, for a run that had started roughly 37 minutes earlier.
+# A UTC printer would have said 22:12 there, so the row is local.
+#
+# Parsing these rows as UTC would therefore be WRONG on this CLI, and wrong in
+# the direction that silently disables the feature: on a host west of UTC every
+# row would resolve into the future, fm_nm_custody_age_fresh below would reject
+# it, and the exemption would be denied for every pipeline-owned crew on the
+# fleet. Re-verify this against a real row before changing the parse.
 fm_nm_runs_row_epoch() {  # <row-remainder>
   local rest day clock stamp
   rest=$(fm_nm_trim "${1:-}")
@@ -235,6 +250,18 @@ fm_nm_custody_age_fresh() {  # <epoch>
 #     (fm_nm_custody_age_fresh).
 # With neither, attribution is unknown and the caller falls back to the pane
 # and log, which surface a wedged crew instead of hiding it.
+#
+# SCOPE of that bound, so it is not read as covering more than it does: it
+# bounds the EXEMPTION only, which is to say only the path where head equality
+# has already failed. A run whose recorded head still equals the worktree HEAD
+# never reaches here at all - it binds through the ordinary head rule above,
+# with no age bound of any kind - so a daemon that dies BEFORE the pipeline
+# moves the head off the crew's own commit can still report that crew working
+# indefinitely. That path is left unbounded deliberately: a head-matched run
+# legitimately stays `running` for the whole CI-monitor phase on a repo where
+# merge is left to the captain, so bounding it would start surfacing crews that
+# are correctly waiting on a captain merge. Closing that gap is a separate
+# product decision about the head rule, not an oversight of this bound.
 fm_nm_run_is_pipeline_owned_active() {  # <toon-output> [<run-started-epoch>]
   [ "$(fm_nm_branch_sync_state "$1")" = pipeline_owned ] || return 1
   fm_nm_run_is_active "$1" || return 1

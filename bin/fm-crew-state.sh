@@ -74,10 +74,17 @@ META="$STATE/$ID.meta"
 LOG="$STATE/$ID.status"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
-# How many of the most recent `no-mistakes runs` rows the cross-branch fallback
-# (nm_runs_status_for_branch, below) scans. Generous enough to still find a
-# branch's own run on a busy multi-crew fleet without listing the entire
-# history every call.
+# How many of the most recent `no-mistakes runs` rows nm_runs_prefetch below
+# asks for. That single fetch feeds BOTH readers of the list: the cross-branch
+# coarse fallback (nm_runs_status_for_branch) and the pipeline-custody age
+# lookup (nm_branch_run_started_epoch), so this value bounds how far back
+# either one can see. Generous enough to still find a branch's own run on a
+# busy multi-crew fleet without listing the entire history every call.
+#
+# The failure mode to look for when a live crew reads stale: a branch whose row
+# has been pushed past this limit by a busy fleet yields no age evidence, so the
+# custody exemption is denied and the crew falls back to its pane and status log
+# even though its run is genuinely running.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
@@ -507,9 +514,10 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
     # pipeline owns this branch the daemon's own branch attribution is
     # authoritative and the lane head need not be a git object here, but the
     # exemption binds only on positive current custody evidence - a gate, or a
-    # run age inside the custody window - so a daemon that died without writing
-    # an outcome cannot report a wedged crew as working forever
-    # (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh).
+    # run age inside the custody window. That bound covers this else-branch
+    # only, and the head-matched branch above is deliberately unbounded;
+    # fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh owns both the
+    # exemption and the reasoning for that scope.
     if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
       && nm_run_head_matches_worktree; then
       HAVE_RUN=1
