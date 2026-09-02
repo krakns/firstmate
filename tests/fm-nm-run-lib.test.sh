@@ -67,6 +67,23 @@ branch_sync:
 EOF
 }
 
+# A whole nested `branch_sync:` BLOCK ahead of the real top-level one. Its own
+# direct child is perfectly well-formed, so direct-child anchoring alone still
+# reads it; only anchoring the block header at top level rejects it.
+toon_nested_branch_sync_block() {  # <nested-state> <top-level-state>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: fm/feat-x
+  status: running
+  head: "f0f0f0f0"
+  branch_sync:
+    state: $1
+branch_sync:
+  state: $2
+EOF
+}
+
 toon_parked_pipeline_owned() {
   cat <<'EOF'
 run:
@@ -133,6 +150,28 @@ test_scan_stops_at_the_end_of_the_block() {
     '  state: pipeline_owned')")
   [ -z "$out" ] || fail "a later block's state: leaked into branch_sync ('$out')"
   pass "the scan stops at the end of the branch_sync block"
+}
+
+test_nested_branch_sync_block_never_wins_over_the_real_one() {
+  local toon out
+  toon=$(toon_nested_branch_sync_block pipeline_owned synced)
+  out=$(fm_nm_branch_sync_state "$toon")
+  [ "$out" = synced ] || fail "a nested branch_sync block was read as the custody label ('$out')"
+  if fm_nm_run_is_pipeline_owned_active "$toon" "$((NOW - 600))"; then
+    fail "a nested branch_sync block granted the head-rule exemption"
+  fi
+  pass "only the top-level branch_sync block is read as the custody label"
+}
+
+test_only_nested_branch_sync_reads_empty() {
+  local toon
+  toon=$(printf '%s\n' 'run:' '  status: running' '  branch_sync:' '    state: pipeline_owned')
+  [ -z "$(fm_nm_branch_sync_state "$toon")" ] \
+    || fail "a document whose only branch_sync is nested reported a custody label"
+  if fm_nm_run_is_pipeline_owned_active "$toon" "$((NOW - 600))"; then
+    fail "a nested-only branch_sync granted the head-rule exemption"
+  fi
+  pass "a nested-only branch_sync reads empty and denies the exemption"
 }
 
 test_absent_block_reads_empty() {
@@ -292,6 +331,8 @@ test_direct_child_state_is_read
 test_nested_state_never_grants_the_exemption
 test_nested_state_never_denies_a_real_exemption
 test_child_indent_unit_is_not_assumed
+test_nested_branch_sync_block_never_wins_over_the_real_one
+test_only_nested_branch_sync_reads_empty
 test_scan_stops_at_the_end_of_the_block
 test_absent_block_reads_empty
 test_quoted_child_value_is_unquoted

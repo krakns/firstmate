@@ -75,6 +75,7 @@ case "${1:-}" in
     esac
     ;;
   runs)
+    if [ -n "${FM_FAKE_RUNS_CALL_LOG:-}" ]; then printf 'call\n' >> "$FM_FAKE_RUNS_CALL_LOG"; fi
     printf '%s\n' "${FM_FAKE_RUNS_LIST:-}" ;;
 esac
 exit 0
@@ -170,6 +171,8 @@ reset_fakes() {
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
+  FM_FAKE_RUNS_CALL_LOG=""
+  export FM_FAKE_RUNS_CALL_LOG
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
 }
@@ -1514,11 +1517,69 @@ EOF
   pass "custody freshness comes from a still-running newest row, never a newer terminal one"
 }
 
-# The coarse runs-list scan has no branch_sync object to read, so an ACTIVE row
-# at an unresolvable head is itself the pipeline-owned lane-head signature. It
-# binds under the same freshness bound: a live validating crew with an idle
-# pane is attributed instead of surfacing as stale, and a stranded row is not.
-test_coarse_fresh_unresolvable_active_row_binds() {
+# Both runs-list readers - the custody age bound and the coarse scan - run
+# inside command substitutions, so a reader that memoizes itself loses the
+# capture with its own subshell and every consumer pays another bounded CLI
+# call. The deny path runs both, and it must still cost exactly one `runs`
+# call; a head match must cost none.
+test_runs_list_is_fetched_once_per_invocation() {
+  reset_fakes
+  local d calls; d=$(new_case f10-runs-fetch-count)
+  make_repo_on_branch "$d/wt" fm/feat-f10m
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10m.meta" "window=fm:fm-feat-f10m" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10m.status"
+  FM_FAKE_RUNS_CALL_LOG="$d/runs.calls"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10m
+
+  # Deny path: unresolvable head, stranded age - the custody lookup runs, the
+  # exemption is denied, and the coarse scan runs after it.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10m f0f0f0f0)"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10m f0f0f0f0  $(runs_date_ago 108000)"
+  run_crew_state "$d" feat-f10m >/dev/null
+  calls=$(wc -l < "$d/runs.calls" | tr -d ' ')
+  [ "$calls" = 1 ] || fail "the deny path made $calls runs-list calls, expected 1"
+
+  # Head match: the run binds without any runs-list evidence at all.
+  : > "$d/runs.calls"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-f10m)"
+  run_crew_state "$d" feat-f10m >/dev/null
+  calls=$(wc -l < "$d/runs.calls" | tr -d ' ')
+  [ "$calls" = 0 ] || fail "a head-matched run made $calls runs-list calls, expected 0"
+  pass "the runs list is fetched once on the deny path and never on a head match"
+}
+
+# Custody age evidence is withheld only from a TERMINAL newest row, not from
+# every word that is not literally "running". `active` is fm_nm_run_is_active's
+# word and means the complement of completed/failed/cancelled, so an in-flight
+# word this file does not enumerate must still yield the run's age - otherwise a
+# genuinely live pipeline-owned crew loses attribution and surfaces as stale.
+test_non_terminal_runs_row_still_yields_custody_age() {
+  reset_fakes
+  local d out; d=$(new_case f10-nonterminal-age)
+  make_repo_on_branch "$d/wt" fm/feat-f10n
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10n.meta" "window=fm:fm-feat-f10n" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10n.status"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10n f0f0f0f0)"
+  FM_FAKE_RUNS_LIST="  fixing     fm/feat-f10n f0f0f0f0  $(runs_date_ago 600)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10n
+  out=$(run_crew_state "$d" feat-f10n)
+  assert_contains "$out" "state: working" "a fresh non-terminal row must still attribute a live custody run"
+  assert_contains "$out" "source: run-step" "a non-terminal runs-list word must still yield age evidence"
+  pass "custody age evidence is withheld only from a terminal newest row"
+}
+
+# The coarse runs-list scan carries no branch_sync object, so it has no
+# `pipeline_owned` custody label to read - and an unresolvable short sha is
+# equally the signature of a run from another clone or a retried task reusing
+# the same fm/<id> branch name. So freshness alone must NOT bind there, even
+# though the full axi-status path would bind the same age: binding on evidence
+# weaker than the full path's would absorb a wedged crew's every wake for the
+# whole custody window.
+test_coarse_fresh_unresolvable_active_row_still_stops() {
   reset_fakes
   local d out; d=$(new_case f10-coarse-fresh)
   make_repo_on_branch "$d/wt" fm/feat-f10f
@@ -1534,9 +1595,10 @@ EOF
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10f
   out=$(run_crew_state "$d" feat-f10f)
-  assert_contains "$out" "state: working" "a fresh unresolvable active row must attribute the crew"
-  assert_contains "$out" "source: run-step" "a fresh unresolvable active row must bind the run"
-  pass "the coarse scan binds a fresh active row at an unresolvable pipeline-owned head"
+  assert_not_contains "$out" "source: run-step" \
+    "the coarse scan bound an unresolvable row on freshness alone, with no custody label"
+  assert_contains "$out" "source: status-log" "unknown coarse attribution falls back to the status log"
+  pass "the coarse scan never binds an unresolvable row, however fresh"
 }
 
 # T1 direction 2: a genuinely-failed run with NO later run on the branch still
@@ -1700,7 +1762,9 @@ test_local_advanced_past_run_head_invalidates
 test_pipeline_owned_active_run_beats_superseded_failed_row
 test_stranded_pipeline_owned_run_stops_reading_working
 test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness
-test_coarse_fresh_unresolvable_active_row_binds
+test_runs_list_is_fetched_once_per_invocation
+test_non_terminal_runs_row_still_yields_custody_age
+test_coarse_fresh_unresolvable_active_row_still_stops
 test_failed_run_with_no_later_run_still_surfaces
 test_coarse_unresolvable_active_row_never_falls_to_older_row
 test_non_pipeline_owned_unresolvable_head_not_attributed

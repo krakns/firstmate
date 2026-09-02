@@ -86,21 +86,26 @@ fm_nm_head_resolvable() {  # <worktree> <head>
   git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null 2>&1
 }
 
-# Scalar value of key $3 directly under the first `$2:` block in TOON $1.
+# Scalar value of key $3 directly under the TOP-LEVEL `$2:` block in TOON $1.
 #
-# Indentation-anchored, because a same-named key inside a nested sub-block must
-# never be mistaken for the direct child: the block header's own indent is
-# recorded, the first more-indented line after it fixes the direct-child indent
-# (TOON's indent unit is never assumed), only lines at exactly that indent are
-# read, and the scan stops at the first line back at or above the block's own
-# indent. Empty when the block or the key is absent.
+# Anchored at both ends, because a same-named key elsewhere in the document must
+# never be mistaken for this one:
+#   - only a block header at ZERO indentation is bound, so a nested `$2:`
+#     sub-block can never win over the real top-level block; and
+#   - within that block the first more-indented line fixes the direct-child
+#     indent (TOON's indent unit is never assumed), only lines at exactly that
+#     indent are read, and the scan stops at the first line back at or above
+#     the block's own indent, so a nested sub-block's own key is skipped.
+# Empty when the top-level block or the key is absent. Every caller treats
+# empty as absent evidence and falls back rather than binding, so a document
+# whose only `$2:` is nested denies attribution instead of misattributing it.
 fm_nm_block_child_scalar() {  # <toon-output> <block-key> <child-key>
   local v
   v=$(printf '%s\n' "$1" | awk -v blk="$2" -v key="$3" '
     function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
     function strip(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     !inblk {
-      if (strip($0) == blk ":") { inblk = 1; bi = ind($0); ci = -1 }
+      if (ind($0) == 0 && strip($0) == blk ":") { inblk = 1; bi = 0; ci = -1 }
       next
     }
     {
@@ -153,6 +158,19 @@ fm_nm_run_is_gate_parked() {  # <toon-output>
 # below, in seconds. FM_NM_CUSTODY_MAX_AGE_SECS overrides it; a malformed or
 # non-positive override falls back to the default rather than removing the
 # bound.
+#
+# 6h is not "longer than any single step": one step provably outlives it. On a
+# repo where merge is left to the captain, the ci step keeps the run `running`
+# for the entire CI-monitor phase and only reaches a terminal outcome once the
+# PR is merged or closed (bin/fm-crew-state.sh's PR #252 note owns that fact).
+# A pipeline-owned run waiting there past 6h stops binding and the crew falls
+# back to its pane and status log. That is the ACCEPTED outcome, for two
+# reasons: it surfaces rather than hides, which is the direction this whole
+# bound exists to enforce; and a crew that reached the CI-monitor phase has
+# normally already appended its own `done: PR ... checks green` line, which the
+# status-log fallback reads as done. Widening the window instead would trade
+# that back for the harm the bound removes - a daemon that died without writing
+# an outcome reporting a wedged crew as working for as long as the window runs.
 FM_NM_CUSTODY_MAX_AGE_SECS_DEFAULT=21600
 fm_nm_custody_max_age_secs() {
   local v=${FM_NM_CUSTODY_MAX_AGE_SECS:-}

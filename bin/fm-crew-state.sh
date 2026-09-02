@@ -350,21 +350,34 @@ nm_ci_checks_state() {
 # The runs list is read at most once per invocation: both the coarse
 # attribution scan and the pipeline-custody age bound below read the same rows,
 # and a second bounded CLI call would just double the wait for identical output.
+#
+# The fetch CANNOT memoize itself from inside nm_runs_list, because both
+# consumers are invoked in command substitutions: the assignment would happen
+# in that subshell and be discarded with it, so a self-memoizing reader fetches
+# once per consumer. nm_runs_prefetch is therefore called once from the
+# attribution block below, in the parent shell, on the only path that needs the
+# list at all (the head match failed); nm_runs_list only ever prints what that
+# call captured, and prints empty when no fetch happened.
 NM_RUNS_OUT=""
 NM_RUNS_FETCHED=0
-nm_runs_list() {
+nm_runs_prefetch() {
   if [ "$NM_RUNS_FETCHED" != 1 ]; then
     NM_RUNS_OUT=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
     NM_RUNS_FETCHED=1
   fi
+}
+nm_runs_list() {
   printf '%s' "$NM_RUNS_OUT"
 }
 
 # Epoch seconds of the NEWEST runs-list row for <branch>: the run-age evidence
 # the pipeline-custody exemption is bounded on (`axi status` carries no
-# timestamp). Only a still-running newest row yields evidence - if this branch's
+# timestamp). Only a NOT-TERMINAL newest row yields evidence - if this branch's
 # newest run already reached a terminal word, the active run `axi status`
 # reports has been superseded and must not borrow the newer row's freshness.
+# Terminal is the complement of active, spelled the same way fm_nm_run_is_active
+# spells it (that function owns the word), so any other in-flight word the CLI
+# prints still yields the age evidence a live run is entitled to.
 # Empty when the branch has no listed row, its newest row is terminal, or that
 # row has no parseable date; fm_nm_custody_age_fresh treats all three as not
 # fresh.
@@ -379,7 +392,7 @@ nm_branch_run_started_epoch() {  # <branch>
     rest=$(trim "${row#* }")
     br=${rest%% *}
     [ "$br" = "$branch" ] || continue
-    [ "$st" = running ] || return 0
+    case "$st" in completed|failed|cancelled) return 0 ;; esac
     rest=$(trim "${rest#* }")
     fm_nm_runs_row_epoch "$(trim "${rest#* }")" || true
     return 0
@@ -418,7 +431,7 @@ nm_branch_run_started_epoch() {  # <branch>
 # matching row's status word (running/completed/cancelled/failed), or empty
 # when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
 nm_runs_status_for_branch() {  # <branch>
-  local branch=$1 out row st rest br sha datepart
+  local branch=$1 out row st rest br sha
   out=$(nm_runs_list)
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
@@ -431,26 +444,23 @@ nm_runs_status_for_branch() {  # <branch>
     rest=${rest#* }
     rest=$(trim "$rest")
     sha=${rest%% *}
-    datepart=$(trim "${rest#* }")
     if [ "$br" = "$branch" ]; then
       # Same code-identity rule as axi status: skip a same-branch row whose
       # short-sha does not match this worktree (rewritten or advanced tip).
       if ! nm_coarse_head_matches_worktree "$sha"; then
-        if ! fm_nm_head_resolvable "$WT" "$sha"; then
-          # An UNRESOLVABLE head is unknown attribution, not a proven mismatch.
-          # An ACTIVE row at such a head is the pipeline-owned lane-head
-          # signature, so it binds while the row is inside the custody
-          # freshness window and a live validating crew is not read as stale.
-          # Outside that window the row may be a run the daemon abandoned
-          # without an outcome, so the scan stops instead - never surfacing an
-          # older, superseded row, and never reporting a stranded run as
-          # working. Both rules are owned by bin/fm-nm-run-lib.sh.
-          if [ "$st" = running ] \
-            && fm_nm_custody_age_fresh "$(fm_nm_runs_row_epoch "$datepart" || true)"; then
-            printf '%s' "$st"
-          fi
-          return 0
-        fi
+        # An UNRESOLVABLE head is unknown attribution, not a proven mismatch,
+        # so the scan STOPS here rather than surfacing an older, superseded
+        # row. It deliberately does not bind the row either, however fresh or
+        # however active it looks. The runs list carries no `pipeline_owned`
+        # custody label, and an unresolvable short sha is equally the signature
+        # of a run started from another clone or a retried task reusing the
+        # same `fm/<id>` branch name - exactly the misattribution
+        # fm_nm_head_matches_worktree exists to prevent. Binding on evidence
+        # the full axi-status path would reject could absorb a wedged crew's
+        # every no-verb signal and turn-end wake for the whole custody window,
+        # which is the precise harm the rest of this attribution exists to
+        # remove, so the safe stop wins over the attribution.
+        fm_nm_head_resolvable "$WT" "$sha" || return 0
         continue
       fi
       printf '%s' "$st"
@@ -501,22 +511,31 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
     # an outcome cannot report a wedged crew as working forever
     # (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh).
     if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
-      && { nm_run_head_matches_worktree \
-           || fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
-                "$(nm_branch_run_started_epoch "$CREW_BRANCH")"; }; then
+      && nm_run_head_matches_worktree; then
       HAVE_RUN=1
     else
-      # The active-or-most-recent run is for another branch, or its same-branch
-      # attribution failed (the CLI is alive and answered) - try the coarse
-      # fallback.
-      # Deliberately nested inside `[ -n "$RUN_OUT" ]`: an empty/timed-out
-      # primary call means the CLI itself did not respond, so retrying it
-      # immediately with a second bounded call would just double the wait
-      # for no better answer.
-      COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
-      if [ -n "$COARSE_STATUS" ]; then
+      # Head equality did not settle it. Every remaining path reads the runs
+      # list - the custody age bound and the coarse scan both - so fetch it
+      # once here, in the parent shell, where the capture survives; a head
+      # match above costs no runs call at all.
+      nm_runs_prefetch
+      if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
+        && fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
+             "$(nm_branch_run_started_epoch "$CREW_BRANCH")"; then
         HAVE_RUN=1
-        RUN_SOURCE=coarse
+      else
+        # The active-or-most-recent run is for another branch, or its
+        # same-branch attribution failed (the CLI is alive and answered) - try
+        # the coarse fallback.
+        # Deliberately nested inside `[ -n "$RUN_OUT" ]`: an empty/timed-out
+        # primary call means the CLI itself did not respond, so retrying it
+        # immediately with a second bounded call would just double the wait
+        # for no better answer.
+        COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
+        if [ -n "$COARSE_STATUS" ]; then
+          HAVE_RUN=1
+          RUN_SOURCE=coarse
+        fi
       fi
     fi
   fi
