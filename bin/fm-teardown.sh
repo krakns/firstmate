@@ -1518,7 +1518,7 @@ NM_TEARDOWN_TIMEOUT=${FM_TEARDOWN_NM_TIMEOUT:-10}
 case "$NM_TEARDOWN_TIMEOUT" in ''|*[!0-9]*) NM_TEARDOWN_TIMEOUT=10 ;; esac
 TASK_RUN_ID=
 task_status_is_own_parked_run() {  # <worktree> <axi-status-output>
-  local wt=$1 out=$2 branch run_id run_branch run_head status outcome awaiting has_gate
+  local wt=$1 out=$2 branch run_id run_branch run_head outcome
   TASK_RUN_ID=
   branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
   [ -n "$branch" ] || return 1
@@ -1539,17 +1539,9 @@ task_status_is_own_parked_run() {  # <worktree> <axi-status-output>
   fi
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$out" outcome)")
   [ -z "$outcome" ] || return 1
-  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
-  awaiting=$(printf '%s\n' "$out" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
-  has_gate=$(printf '%s\n' "$out" | grep -Eq '^[[:space:]]*gate:[[:space:]]*' && echo 1 || echo 0)
-  case "$status" in
-    awaiting_approval|fix_review) TASK_RUN_ID=$run_id; return 0 ;;
-  esac
-  if [ -n "$awaiting" ] || [ "$has_gate" = 1 ]; then
-    TASK_RUN_ID=$run_id
-    return 0
-  fi
-  return 1
+  fm_nm_run_is_gate_parked "$out" || return 1
+  TASK_RUN_ID=$run_id
+  return 0
 }
 
 task_run_is_own_parked_run() {  # <worktree>

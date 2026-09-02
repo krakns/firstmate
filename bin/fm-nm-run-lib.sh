@@ -96,9 +96,19 @@ fm_nm_head_resolvable() {  # <worktree> <head>
 #     indent (TOON's indent unit is never assumed), only lines at exactly that
 #     indent are read, and the scan stops at the first line back at or above
 #     the block's own indent, so a nested sub-block's own key is skipped.
-# Empty when the top-level block or the key is absent. Every caller treats
-# empty as absent evidence and falls back rather than binding, so a document
-# whose only `$2:` is nested denies attribution instead of misattributing it.
+# Empty when the top-level block or the key is absent. Every caller reads empty
+# as absent evidence and denies attribution, but that denial is NOT uniformly
+# safe, so do not treat empty as a free fallback:
+#   - bin/fm-crew-state.sh falls back to the pane and status log, which
+#     SURFACES the crew, so denial there is the conservative direction; but
+#   - bin/fm-teardown.sh gets 1 back from fm_nm_run_is_pipeline_owned_active,
+#     issues no `axi abort`, and leaves a parked run orphaned holding a fleet
+#     slot - which is exactly the harm this change set out to remove.
+# Empty is acceptable only because the top-level block shape is the verified
+# contract (the captured fixtures record it). A CLI that ever indents the whole
+# document under a root key would read empty everywhere, degrading crew-state
+# safely and silently regressing teardown to orphaning, with no error on
+# either side; re-verify the shape before relying on that.
 fm_nm_block_child_scalar() {  # <toon-output> <block-key> <child-key>
   local v
   v=$(printf '%s\n' "$1" | awk -v blk="$2" -v key="$3" '
