@@ -1395,6 +1395,18 @@ test_local_advanced_past_run_head_invalidates() {
 # Every fixture head is deliberately unresolvable so only the top-level
 # branch_sync exemption - never an accidental nested-field match - attributes
 # the run.
+#
+# That exemption is BOUNDED on run age, because `axi status` keeps reporting
+# `running` + `pipeline_owned` after a daemon dies without writing an outcome.
+# The runs list is the only place a run's age is published, so these fixtures
+# date their rows deliberately: runs_date_ago 600 is a live run inside the
+# custody window, runs_date_ago 108000 is a stranded one outside it.
+runs_date_ago() {  # <seconds-before-now>
+  local now epoch
+  now=$(date +%s)
+  epoch=$((now - $1))
+  date -r "$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$epoch" '+%Y-%m-%d %H:%M'
+}
 run_running_pipeline_owned() {  # <branch> <head> [<sync-state>]
   cat <<EOF
 run:
@@ -1431,8 +1443,8 @@ test_pipeline_owned_active_run_beats_superseded_failed_row() {
   fm_write_meta "$d/state/feat-f10.meta" "window=fm:fm-feat-f10" "worktree=$d/wt" "kind=ship"
   FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10 f0f0f0f0)"
   FM_FAKE_RUNS_LIST="$(cat <<EOF
-  running    fm/feat-f10 f0f0f0f0  2026-08-27 13:53
-  failed     fm/feat-f10 ${short}  2026-08-27 12:09
+  running    fm/feat-f10 f0f0f0f0  $(runs_date_ago 600)
+  failed     fm/feat-f10 ${short}  $(runs_date_ago 5400)
 EOF
 )"
   local out; out=$(run_crew_state "$d" feat-f10)
@@ -1440,6 +1452,91 @@ EOF
   assert_contains "$out" "source: run-step" "pipeline-owned live run -> run-step source"
   assert_not_contains "$out" "state: failed" "superseded failed row must not surface over the live run"
   pass "pipeline-owned active run binds without head equality and beats the failed row"
+}
+
+# The regression for a wedged worker going permanently invisible: a daemon that
+# died without writing an outcome leaves `axi status` reporting `running` with
+# `pipeline_owned` forever. Unbounded, that exemption reports the crew working
+# from the run-step source on every read, and supervision absorbs every no-verb
+# signal and turn-end wake it ever sends again. Past the custody window the
+# exemption must stop binding so the crew's own idle pane and status log
+# decide, and the wake must surface.
+test_stranded_pipeline_owned_run_stops_reading_working() {
+  reset_fakes
+  local d out; d=$(new_case f10-stranded-custody)
+  make_repo_on_branch "$d/wt" fm/feat-f10s
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10s.meta" "window=fm:fm-feat-f10s" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10s.status"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10s f0f0f0f0)"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10s f0f0f0f0  $(runs_date_ago 108000)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10s
+
+  out=$(run_crew_state "$d" feat-f10s)
+  assert_not_contains "$out" "source: run-step" \
+    "a stranded pipeline-owned run must not keep binding as the authoritative source"
+
+  # The harm this prevents: absorbing every wake from that crew forever.
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10s \
+    && fail "a stranded pipeline-owned run was still treated as provably working"
+
+  # Same crew, same unresolvable head, run age inside the window: still working.
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10s f0f0f0f0  $(runs_date_ago 600)"
+  out=$(run_crew_state "$d" feat-f10s)
+  assert_contains "$out" "state: working" "a live pipeline-owned run must still read working"
+  assert_contains "$out" "source: run-step" "a live pipeline-owned run must still bind the run-step"
+  pass "a stranded pipeline-owned run stops reading working while a live one still binds"
+}
+
+# The custody age evidence must come from a still-running newest row. When this
+# branch's newest run has already reached a terminal word, the run `axi status`
+# still calls active has been superseded, and it must not borrow the newer row's
+# freshness to keep binding.
+test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness() {
+  reset_fakes
+  local d out; d=$(new_case f10-superseded-custody)
+  make_repo_on_branch "$d/wt" fm/feat-f10g
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10g.meta" "window=fm:fm-feat-f10g" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10g.status"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10g f0f0f0f0)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  failed     fm/feat-f10g f0f0f0f0  $(runs_date_ago 600)
+  running    fm/feat-f10g f0f0f0f0  $(runs_date_ago 108000)
+EOF
+)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10g
+  out=$(run_crew_state "$d" feat-f10g)
+  assert_not_contains "$out" "source: run-step" \
+    "a superseded pipeline-owned run borrowed a newer terminal row's freshness"
+  pass "custody freshness comes from a still-running newest row, never a newer terminal one"
+}
+
+# The coarse runs-list scan has no branch_sync object to read, so an ACTIVE row
+# at an unresolvable head is itself the pipeline-owned lane-head signature. It
+# binds under the same freshness bound: a live validating crew with an idle
+# pane is attributed instead of surfacing as stale, and a stranded row is not.
+test_coarse_fresh_unresolvable_active_row_binds() {
+  reset_fakes
+  local d out; d=$(new_case f10-coarse-fresh)
+  make_repo_on_branch "$d/wt" fm/feat-f10f
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10f.meta" "window=fm:fm-feat-f10f" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10f.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  $(runs_date_ago 300)
+  running    fm/feat-f10f f0f0f0f0  $(runs_date_ago 600)
+EOF
+)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10f
+  out=$(run_crew_state "$d" feat-f10f)
+  assert_contains "$out" "state: working" "a fresh unresolvable active row must attribute the crew"
+  assert_contains "$out" "source: run-step" "a fresh unresolvable active row must bind the run"
+  pass "the coarse scan binds a fresh active row at an unresolvable pipeline-owned head"
 }
 
 # T1 direction 2: a genuinely-failed run with NO later run on the branch still
@@ -1601,6 +1698,9 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_pipeline_owned_active_run_beats_superseded_failed_row
+test_stranded_pipeline_owned_run_stops_reading_working
+test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness
+test_coarse_fresh_unresolvable_active_row_binds
 test_failed_run_with_no_later_run_still_surfaces
 test_coarse_unresolvable_active_row_never_falls_to_older_row
 test_non_pipeline_owned_unresolvable_head_not_attributed

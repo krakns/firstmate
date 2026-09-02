@@ -346,6 +346,47 @@ nm_ci_checks_state() {
     *) printf 'unknown' ;;
   esac
 }
+
+# The runs list is read at most once per invocation: both the coarse
+# attribution scan and the pipeline-custody age bound below read the same rows,
+# and a second bounded CLI call would just double the wait for identical output.
+NM_RUNS_OUT=""
+NM_RUNS_FETCHED=0
+nm_runs_list() {
+  if [ "$NM_RUNS_FETCHED" != 1 ]; then
+    NM_RUNS_OUT=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
+    NM_RUNS_FETCHED=1
+  fi
+  printf '%s' "$NM_RUNS_OUT"
+}
+
+# Epoch seconds of the NEWEST runs-list row for <branch>: the run-age evidence
+# the pipeline-custody exemption is bounded on (`axi status` carries no
+# timestamp). Only a still-running newest row yields evidence - if this branch's
+# newest run already reached a terminal word, the active run `axi status`
+# reports has been superseded and must not borrow the newer row's freshness.
+# Empty when the branch has no listed row, its newest row is terminal, or that
+# row has no parseable date; fm_nm_custody_age_fresh treats all three as not
+# fresh.
+nm_branch_run_started_epoch() {  # <branch>
+  local branch=$1 out row st rest br
+  out=$(nm_runs_list)
+  [ -n "$out" ] || return 0
+  while IFS= read -r row; do
+    row=$(trim "$row")
+    [ -n "$row" ] || continue
+    st=${row%% *}
+    rest=$(trim "${row#* }")
+    br=${rest%% *}
+    [ "$br" = "$branch" ] || continue
+    [ "$st" = running ] || return 0
+    rest=$(trim "${rest#* }")
+    fm_nm_runs_row_epoch "$(trim "${rest#* }")" || true
+    return 0
+  done <<< "$out"
+  return 0
+}
+
 # Coarse fallback for cross-branch attribution. `no-mistakes axi status` (bare)
 # reports the active-or-most-recent run for the CURRENT branch when one
 # exists, else falls back to some other branch's run purely as informational
@@ -377,8 +418,8 @@ nm_ci_checks_state() {
 # matching row's status word (running/completed/cancelled/failed), or empty
 # when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
 nm_runs_status_for_branch() {  # <branch>
-  local branch=$1 out row st rest br sha
-  out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
+  local branch=$1 out row st rest br sha datepart
+  out=$(nm_runs_list)
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
     row=$(trim "$row")
@@ -390,14 +431,26 @@ nm_runs_status_for_branch() {  # <branch>
     rest=${rest#* }
     rest=$(trim "$rest")
     sha=${rest%% *}
+    datepart=$(trim "${rest#* }")
     if [ "$br" = "$branch" ]; then
       # Same code-identity rule as axi status: skip a same-branch row whose
       # short-sha does not match this worktree (rewritten or advanced tip).
       if ! nm_coarse_head_matches_worktree "$sha"; then
-        # An UNRESOLVABLE head is unknown attribution, not a proven
-        # mismatch. Stop instead of surfacing an older, superseded row;
-        # the caller's pane/log fallback can answer without misattribution.
-        fm_nm_head_resolvable "$WT" "$sha" || return 0
+        if ! fm_nm_head_resolvable "$WT" "$sha"; then
+          # An UNRESOLVABLE head is unknown attribution, not a proven mismatch.
+          # An ACTIVE row at such a head is the pipeline-owned lane-head
+          # signature, so it binds while the row is inside the custody
+          # freshness window and a live validating crew is not read as stale.
+          # Outside that window the row may be a run the daemon abandoned
+          # without an outcome, so the scan stops instead - never surfacing an
+          # older, superseded row, and never reporting a stranded run as
+          # working. Both rules are owned by bin/fm-nm-run-lib.sh.
+          if [ "$st" = running ] \
+            && fm_nm_custody_age_fresh "$(fm_nm_runs_row_epoch "$datepart" || true)"; then
+            printf '%s' "$st"
+          fi
+          return 0
+        fi
         continue
       fi
       printf '%s' "$st"
@@ -440,12 +493,17 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   RUN_OUT=$(nm_run axi status)
   if [ -n "$RUN_OUT" ]; then
     run_branch=$(strip_quotes "$(nm_field branch)")
-    # Head equality, or the pipeline-owned-active exemption: while the
-    # pipeline owns this branch, the daemon's own branch attribution is
-    # authoritative and the lane head need not be a git object here
+    # Head equality, or the bounded pipeline-custody exemption: while the
+    # pipeline owns this branch the daemon's own branch attribution is
+    # authoritative and the lane head need not be a git object here, but the
+    # exemption binds only on positive current custody evidence - a gate, or a
+    # run age inside the custody window - so a daemon that died without writing
+    # an outcome cannot report a wedged crew as working forever
     # (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh).
     if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
-      && { nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; }; then
+      && { nm_run_head_matches_worktree \
+           || fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
+                "$(nm_branch_run_started_epoch "$CREW_BRANCH")"; }; then
       HAVE_RUN=1
     else
       # The active-or-most-recent run is for another branch, or its same-branch

@@ -3,11 +3,11 @@
 #
 # ONE owner for the no-mistakes run-attribution primitives used by
 # fm-crew-state.sh (read-only current-state reporting) and fm-teardown.sh
-# (pre-teardown run abort, see its "Fix 1" header comment). Teardown uses only
-# strict branch-and-head identity; crew-state additionally permits the active
-# pipeline-owned exemption defined below. Getting this wrong in either
-# direction is unsafe: a false negative hides a genuinely parked run, and a
-# false positive lets teardown act on a run it does not own.
+# (pre-teardown run abort, see its "Fix 1" header comment). Both bind a run on
+# strict branch-and-head identity, or on the bounded pipeline-custody exemption
+# defined below. Getting this wrong in either direction is unsafe: a false
+# negative hides a genuinely parked run and lets a wedged crew read as working
+# forever, while a false positive lets teardown act on a run it does not own.
 #
 # Bounded call to `no-mistakes "$@"` in dir $1, timeout $2 seconds. The bounded
 # form preserves stdout, stderr, and exit status; the checked form discards
@@ -86,39 +86,140 @@ fm_nm_head_resolvable() {  # <worktree> <head>
   git -C "$1" rev-parse --verify --quiet "$2^{commit}" >/dev/null 2>&1
 }
 
-# branch_sync.state from captured `axi status` TOON $1: the scalar directly
-# under the top-level `branch_sync:` block. The first `state:` inside the
-# block is the direct child (the nested local/pipeline/target/remote
-# sub-blocks carry no `state:` key). Empty when the block is absent: no run
-# on the current branch, another branch's run, or a CLI without branch sync.
-fm_nm_branch_sync_state() {  # <toon-output>
-  local s
-  s=$(printf '%s\n' "$1" \
-    | sed -n '/^[[:space:]]*branch_sync:[[:space:]]*$/,/^[^[:space:]][^:]*:/s/^[[:space:]]\{1,\}state:[[:space:]]*\(.*\)/\1/p' \
-    | head -1)
-  fm_nm_strip_quotes "$s"
+# Scalar value of key $3 directly under the first `$2:` block in TOON $1.
+#
+# Indentation-anchored, because a same-named key inside a nested sub-block must
+# never be mistaken for the direct child: the block header's own indent is
+# recorded, the first more-indented line after it fixes the direct-child indent
+# (TOON's indent unit is never assumed), only lines at exactly that indent are
+# read, and the scan stops at the first line back at or above the block's own
+# indent. Empty when the block or the key is absent.
+fm_nm_block_child_scalar() {  # <toon-output> <block-key> <child-key>
+  local v
+  v=$(printf '%s\n' "$1" | awk -v blk="$2" -v key="$3" '
+    function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+    function strip(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    !inblk {
+      if (strip($0) == blk ":") { inblk = 1; bi = ind($0); ci = -1 }
+      next
+    }
+    {
+      if ($0 ~ /^[ \t]*$/) next
+      i = ind($0)
+      if (i <= bi) exit
+      if (ci < 0) ci = i
+      if (i != ci) next
+      line = strip($0)
+      if (index(line, key ":") == 1) { print substr(line, length(key) + 2); exit }
+    }
+  ')
+  fm_nm_trim "$v"
 }
 
-# 0 if the run in captured `axi status` TOON $1 is still in flight: no
-# terminal outcome and no terminal status.
+# branch_sync.state from captured `axi status` TOON $1: the scalar DIRECTLY
+# under the top-level `branch_sync:` block, never a nested sub-block's own
+# `state:`. Empty when the block is absent: no run on the current branch,
+# another branch's run, or a CLI without branch sync.
+fm_nm_branch_sync_state() {  # <toon-output>
+  fm_nm_strip_quotes "$(fm_nm_block_child_scalar "$1" branch_sync state)"
+}
+
+# 0 if the run in captured `axi status` TOON $1 is still in flight: a POSITIVE
+# non-terminal status and no terminal outcome. An ABSENT status is not evidence
+# of a live run and returns 1 - the exemption below trades away the head rule,
+# so it must never bind on missing information.
 fm_nm_run_is_active() {  # <toon-output>
   local status outcome
   status=$(fm_nm_strip_quotes "$(fm_nm_field "$1" status)")
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$1" outcome)")
   [ -z "$outcome" ] || return 1
+  [ -n "$status" ] || return 1
   case "$status" in completed|failed|cancelled) return 1 ;; esac
+}
+
+# 0 if the run in $1 is parked at a gate awaiting the agent. The daemon wrote
+# that gate and is holding the branch for it, which is itself positive evidence
+# that the custody record is current, and a parked run never maps to `working`
+# (bin/fm-crew-state.sh maps it to `parked`, which supervision surfaces rather
+# than absorbs), so it cannot make a wedged crew invisible.
+fm_nm_run_is_gate_parked() {  # <toon-output>
+  local status
+  status=$(fm_nm_strip_quotes "$(fm_nm_field "$1" status)")
+  case "$status" in awaiting_approval|fix_review) return 0 ;; esac
+  printf '%s\n' "$1" | grep -Eq '^[[:space:]]*(awaiting_agent|gate):'
+}
+
+# Oldest a pipeline-owned run may be and still bind through the exemption
+# below, in seconds. FM_NM_CUSTODY_MAX_AGE_SECS overrides it; a malformed or
+# non-positive override falls back to the default rather than removing the
+# bound.
+FM_NM_CUSTODY_MAX_AGE_SECS_DEFAULT=21600
+fm_nm_custody_max_age_secs() {
+  local v=${FM_NM_CUSTODY_MAX_AGE_SECS:-}
+  case "$v" in ''|*[!0-9]*) v=$FM_NM_CUSTODY_MAX_AGE_SECS_DEFAULT ;; esac
+  [ "$v" -gt 0 ] 2>/dev/null || v=$FM_NM_CUSTODY_MAX_AGE_SECS_DEFAULT
+  printf '%s' "$v"
+}
+
+# Epoch seconds for the local "<YYYY-MM-DD> <HH:MM>" date pair that opens $1,
+# the remainder of a `no-mistakes runs` row after its short sha. That list is
+# the only run-age evidence either caller can read: `axi status` carries no
+# timestamp at all. Prints nothing and returns 1 when $1 has no parseable date.
+fm_nm_runs_row_epoch() {  # <row-remainder>
+  local rest day clock stamp
+  rest=$(fm_nm_trim "${1:-}")
+  [ -n "$rest" ] || return 1
+  day=${rest%% *}
+  case "$day" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
+  rest=$(fm_nm_trim "${rest#* }")
+  clock=${rest%% *}
+  case "$clock" in [0-9][0-9]:[0-9][0-9]) ;; *) return 1 ;; esac
+  stamp="$day $clock"
+  date -j -f '%Y-%m-%d %H:%M' "$stamp" +%s 2>/dev/null \
+    || date -d "$stamp" +%s 2>/dev/null \
+    || return 1
+}
+
+# 0 if epoch $1 is inside the custody window: not older than
+# fm_nm_custody_max_age_secs and not implausibly far in the future. A missing
+# or unparseable epoch is NOT fresh - absence of evidence never grants the
+# exemption.
+fm_nm_custody_age_fresh() {  # <epoch>
+  local started=${1:-} now max
+  case "$started" in ''|*[!0-9]*) return 1 ;; esac
+  now=$(date +%s)
+  max=$(fm_nm_custody_max_age_secs)
+  [ "$started" -le $((now + 300)) ] || return 1
+  [ $((now - started)) -le "$max" ]
 }
 
 # The one exemption to the head rule above: while the pipeline OWNS the branch
 # (branch_sync.state=pipeline_owned), the daemon's own branch attribution IS
-# the attribution for an ACTIVE run, and
-# head equality must not be required - the pipeline's lane head is routinely
-# not a git object in the task worktree (rebase and fix commits that were
-# never pushed back), so the head rule rejects exactly the run that is most
-# current. The exemption never applies to a terminal run: a terminal run has
-# released the branch, and binding one by branch name alone is the historical
+# the attribution for an ACTIVE run, and head equality must not be required -
+# the pipeline's lane head is routinely not a git object in the task worktree
+# (rebase and fix commits that were never pushed back), so the head rule
+# rejects exactly the run that is most current.
+#
+# The exemption never applies to a terminal run: a terminal run has released
+# the branch, and binding one by branch name alone is the historical
 # reused-branch misattribution the head rule exists to prevent.
-fm_nm_run_is_pipeline_owned_active() {  # <toon-output>
+#
+# It is also BOUNDED, because a run row reads `running` + `pipeline_owned`
+# forever when the daemon dies without writing an outcome (host restart, OOM,
+# an abort that never completed). An unbounded exemption reports such a run as
+# working, which absorbs every signal and turn-end wake from that crew
+# permanently - the head rule used to reject the unresolvable head and let the
+# crew fall through to pane and log, which surfaces. So the exemption binds
+# only with positive, current custody evidence:
+#   - the run is parked at a gate (fm_nm_run_is_gate_parked): the daemon wrote
+#     that gate, and parked never maps to working; or
+#   - run-started epoch $2 is inside the custody window
+#     (fm_nm_custody_age_fresh).
+# With neither, attribution is unknown and the caller falls back to the pane
+# and log, which surface a wedged crew instead of hiding it.
+fm_nm_run_is_pipeline_owned_active() {  # <toon-output> [<run-started-epoch>]
   [ "$(fm_nm_branch_sync_state "$1")" = pipeline_owned ] || return 1
-  fm_nm_run_is_active "$1"
+  fm_nm_run_is_active "$1" || return 1
+  fm_nm_run_is_gate_parked "$1" && return 0
+  fm_nm_custody_age_fresh "${2:-}"
 }
