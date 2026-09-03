@@ -12,32 +12,31 @@
 # live watcher process means per supervision model. The status fields here retain
 # the beacon-age details used in their messages.
 
+_FM_SUP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ONE owner for "how old is this file": fm_path_age in bin/fm-wake-lib.sh, which
 # carries the contract that its result is always either a real non-negative
 # base-10 age or the 999999 sentinel - never empty, negative, or non-numeric.
 # This library is independently sourceable (tests source it alone), so it pulls
 # that owner into scope rather than keeping a second copy of the same arithmetic
-# that would have to be extended in lockstep. Sourced only when absent, so the
-# four scripts that already load bin/fm-wake-lib.sh are unaffected.
-# The one accepted cost, verified rather than assumed: bin/fm-wake-lib.sh runs
-# `mkdir -p "$STATE"` at source time, so a standalone consumer now creates that
-# gitignored directory. Every consumer that loads bin/fm-wake-lib.sh already
-# accepts it; removing the cost means moving that mkdir out of wake-lib's source
-# path, not re-splitting this contract.
-if ! command -v fm_path_age >/dev/null 2>&1; then
+# that would have to be extended in lockstep.
+#
+# Loaded on first use rather than at source time, following the same deferred
+# pattern bin/fm-wake-lib.sh uses for its own optional dependencies:
+# bin/fm-wake-lib.sh runs `mkdir -p "$STATE"` when it is sourced, and
+# bin/fm-turnend-guard.sh sources this library at its top but reads its hook
+# payload, degrades without jq, stands down on a foreign host, and checks
+# fm_primary_scope_matches - whose last arm is `[ -d "$state" ]` - before it ever
+# calls fm_supervision_status.
+#
+# The ordering constraint that remains, stated rather than assumed away: a
+# consumer that calls fm_supervision_status without bin/fm-wake-lib.sh already in
+# scope loads it at that point, and takes that mkdir with it.
+_fm_sup_require_age() {
+  command -v fm_path_age >/dev/null 2>&1 && return 0
   # shellcheck source=bin/fm-wake-lib.sh
-  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-wake-lib.sh"
-fi
-
-# Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
-fm_sup_stat_mtime() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
+  . "$_FM_SUP_LIB_DIR/fm-wake-lib.sh"
 }
-
 
 # fm_supervision_status <state-dir> [grace-seconds]
 # Populates, for the state dir at $1:
@@ -52,6 +51,7 @@ fm_sup_stat_mtime() {
 # grace-seconds defaults to $FM_GUARD_GRACE, then 300, matching fm-guard.sh.
 # Always returns 0; callers read the vars, or use fm_supervision_unhealthy below.
 fm_supervision_status() {
+  _fm_sup_require_age
   local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} meta source beat age
   FM_SUP_IN_FLIGHT=0
   FM_SUP_NEEDED=false
