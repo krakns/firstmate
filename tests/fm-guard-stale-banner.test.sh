@@ -714,6 +714,50 @@ test_away_flag_without_live_daemon_alarms() {
   pass "fm-guard stale banner: away flag with a dead daemon alarms even while the beacon is fresh"
 }
 
+test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon() {
+  local dir out home
+  dir=$(make_guard_case away-flag-no-daemon-stale)
+  home=$(case_home "$dir")
+  # The dominant real case: the captain returns long after the reap, so the
+  # beacon the daemon's watcher child left has decayed well past grace. The
+  # verdict must still name the away-mode cause - the daemon is why nothing is
+  # supervising - rather than degrading to the generic stale-beacon banner once
+  # the beacon ages out of the blind window.
+  : > "$home/state/.afk"
+  touch -t 202601010000 "$home/state/.last-watcher-beat"
+  record_daemon_lock "$dir" 999999 "dead daemon identity"
+  out=$(run_guard_case_autoarm "$dir")
+  [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
+    || fail "a long-stale beacon with a dead away-mode daemon must still raise the away-mode alarm, got: $out"
+  assert_contains "$out" "away mode is flagged but no live away-mode supervisor owns this home" \
+    "away-mode banner must name the flag-without-daemon cause at any beacon age"
+  assert_not_contains "$out" "no watcher has a fresh beacon" \
+    "a reaped away-mode daemon must not be reported as a generic stale beacon"
+  pass "fm-guard stale banner: away flag with a dead daemon alarms as away-mode even when the beacon is long stale"
+}
+
+test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale() {
+  local dir out home pid
+  dir=$(make_guard_case away-flag-live-daemon-stale)
+  home=$(case_home "$dir")
+  # A daemon that still owns the home but stopped restarting its watcher is a
+  # genuine beacon lapse, not a missing supervisor: freshness is still the
+  # deciding test once ownership holds.
+  sleep 300 &
+  pid=$!
+  : > "$home/state/.afk"
+  touch -t 202601010000 "$home/state/.last-watcher-beat"
+  record_daemon_lock "$dir" "$pid" || { kill "$pid" 2>/dev/null; fail "could not record a live away-mode daemon lock"; }
+  out=$(run_guard_case_autoarm "$dir")
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a live away-mode daemon with a stale beacon must alarm as a beacon lapse, got: $out"
+  assert_contains "$out" "no watcher has a fresh beacon" \
+    "a live daemon with a stale beacon must name the stale-beacon reason"
+  pass "fm-guard stale banner: a live away-mode daemon with a stale beacon still alarms as stale-beacon"
+}
+
 test_away_flag_with_live_daemon_is_healthy() {
   local dir out home pid
   dir=$(make_guard_case away-flag-live-daemon)
@@ -762,4 +806,6 @@ test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
 test_away_flag_without_live_daemon_alarms
+test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
+test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale
 test_away_flag_with_live_daemon_is_healthy

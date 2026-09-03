@@ -245,12 +245,14 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   local f=$1 m now
   m=$(_stat_file_mtime "$f") || { echo 999999; return; }
   # Fail closed to "very old" unless the mtime is a plain run of digits. A stat
-  # that exits 0 while printing nothing or a non-numeric token would otherwise
-  # make this print empty (the arithmetic below aborts under `set -u`), and the
-  # housekeeping gate that reads this age would then error with
-  # "[: : integer expression expected" and silently skip that tick - the tick
-  # that drives batch flushes, stale rechecks, and the catch-all scan. 999999
-  # makes the gate RUN instead of skip, which is the safe direction.
+  # that exits 0 while printing a non-empty non-numeric token (say "abc" or
+  # "12x") aborts the arithmetic below inside the command substitution, so this
+  # printed nothing and the housekeeping gate that reads the age errored with
+  # "[: : integer expression expected" and silently skipped that tick - the tick
+  # that drives batch flushes, stale rechecks, and the catch-all scan. An empty
+  # token does not abort (the shell evaluates it as 0) but is just as untrue an
+  # age, so both are rejected here. 999999 makes the gate RUN instead of skip,
+  # which is the safe direction.
   case "$m" in
     ''|*[!0-9]*) echo 999999; return ;;
   esac
@@ -998,14 +1000,28 @@ inject_wedge_alarm() {  # <state> <age-seconds>
 }
 
 _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first arrived (sidecar epoch)
-  local f=$1 since
+  local f=$1 since stamp now
   [ -s "$f" ] || { echo 999999; return; }
   since="${f}.since"
-  if [ -r "$since" ]; then
-    echo $(( $(_now) - $(cat "$since" 2>/dev/null || echo 0) ))
-  else
-    echo 999999
-  fi
+  [ -r "$since" ] || { echo 999999; return; }
+  # Same fail-closed discipline as _file_age. escalate_add writes the sidecar by
+  # truncating before `date` produces its output, so a reap or a full disk in
+  # that window leaves it empty or partial; `cat` still exits 0, so the `|| echo
+  # 0` fallback never fired and a non-numeric stamp aborted the arithmetic
+  # inside the substitution. Both callers below feed this straight into
+  # `[ "$age" -ge N ]`, which then errored and took the false branch - stranding
+  # every buffered away-mode escalation, since with batching on the only other
+  # flush is the shutdown trap, and suppressing the wedge alarm that exists to
+  # notice exactly that. 999999 flushes and alarms instead.
+  stamp=$(cat "$since" 2>/dev/null)
+  case "$stamp" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  now=$(_now)
+  case "$now" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  echo $(( now - stamp ))
 }
 
 # --- housekeeping (runs every tick while the watcher is mid-cycle) ----------

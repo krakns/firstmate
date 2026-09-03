@@ -2642,6 +2642,44 @@ test_file_age_fails_closed_on_unreadable_mtime() {
   pass "_file_age fails closed to 999999 on an empty or non-numeric mtime read"
 }
 
+test_oldest_line_age_fails_closed_on_unreadable_sidecar() {
+  # escalate_add truncates the .since sidecar before `date` writes into it, so a
+  # reap or a full disk in that window leaves it empty or partial. `cat` still
+  # exits 0 there, so the old `|| echo 0` fallback never fired and the arithmetic
+  # aborted inside the substitution, printing nothing: both the batch-flush gate
+  # and the max-defer/wedge-alarm gate then errored with
+  # "[: : integer expression expected" and took the false branch, stranding every
+  # buffered away-mode escalation. Fail closed to 999999 so both gates RUN.
+  local age buf
+  buf=$(mktemp "$TMP_ROOT/escalations.XXXXXX")
+  printf 'one escalation\n' > "$buf"
+  [ "$(_oldest_line_age "$buf")" = 999999 ] \
+    || fail "a buffer with no .since sidecar must read as 999999"
+  printf '%s\n' "$(( $(_now) - 42 ))" > "${buf}.since"
+  age=$(_oldest_line_age "$buf")
+  case "$age" in ''|*[!0-9]*) fail "a valid sidecar must yield a non-negative integer, got: [$age]" ;; esac
+  [ "$age" -ge 42 ] || fail "a 42s-old sidecar must read as at least 42s, got: [$age]"
+  : > "${buf}.since"
+  age=$(_oldest_line_age "$buf")
+  [ "$age" = 999999 ] || fail "an empty .since sidecar must fail closed to 999999, got: [$age]"
+  printf 'abc\n' > "${buf}.since"
+  age=$(_oldest_line_age "$buf")
+  [ "$age" = 999999 ] || fail "a non-numeric .since sidecar must fail closed to 999999, got: [$age]"
+  printf '17x\n' > "${buf}.since"
+  age=$(_oldest_line_age "$buf")
+  [ "$age" = 999999 ] || fail "a part-numeric .since sidecar must fail closed to 999999, got: [$age]"
+  # The fail-closed value must clear both gates as a plain integer comparison.
+  : > "${buf}.since"
+  age=$(_oldest_line_age "$buf")
+  { [ "$age" -ge "$ESCALATE_BATCH_SECS_DEFAULT" ] && [ "$age" -ge "$MAX_DEFER_SECS_DEFAULT" ]; } 2>/dev/null \
+    || fail "the fail-closed age must trip the batch-flush and max-defer gates, got: [$age]"
+  # An empty buffer still short-circuits, whatever the sidecar says.
+  : > "$buf"
+  [ "$(_oldest_line_age "$buf")" = 999999 ] || fail "an empty buffer must read as 999999"
+  rm -f "$buf" "${buf}.since"
+  pass "_oldest_line_age fails closed to 999999 on an empty or non-numeric .since sidecar"
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -2766,3 +2804,4 @@ test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
 test_file_age_fails_closed_on_unreadable_mtime
+test_oldest_line_age_fails_closed_on_unreadable_sidecar

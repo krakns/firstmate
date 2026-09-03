@@ -89,10 +89,24 @@ fm_path_mtime() {
   fi
 }
 
+# fm_path_age <path> -> seconds since mtime, or 999999 when that cannot be read.
+# Fail closed to "very old" unless both the mtime and the clock are plain runs
+# of digits. A stat that exits 0 while printing a non-numeric token would abort
+# the arithmetic inside the command substitution and make this print nothing,
+# and callers feed the result straight into `[ "$age" -ge N ]`, which would then
+# error with "integer expression expected" and silently take the false branch.
+# 999999 keeps every such caller on its age-exceeded branch instead.
 fm_path_age() {
-  local path=$1 m
+  local path=$1 m now
   m=$(fm_path_mtime "$path") || { echo 999999; return; }
-  echo $(( $(date +%s) - m ))
+  case "$m" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  now=$(date +%s)
+  case "$now" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  echo $(( now - m ))
 }
 
 # fm_watcher_lock_unheld <state>
@@ -298,6 +312,13 @@ fm_afk_flag_without_live_daemon() {  # <state>
 #                                             the lock (the beacon is still fresh)
 #                              stale-beacon - the beacon is stale beyond grace or
 #                                             absent (a genuine supervision lapse)
+#                              no-afk-daemon - away mode is flagged but no live
+#                                             identity-matched daemon owns this
+#                                             home, at any beacon age
+# away mode (state/.afk present) short-circuits ahead of the model dispatch
+# below, because in away mode the daemon owns the watcher whatever the harness
+# is: no live daemon is no-afk-daemon regardless of freshness, and only a daemon
+# that still owns the home can then fail on a stale beacon alone.
 # autoarm: a fresh beacon within grace is healthy even with no live watcher,
 # because the watcher only runs between turns; only a stale beacon is a lapse.
 # extension: a live identity-matched watcher is the ordinary healthy state, but a
@@ -332,19 +353,22 @@ fm_watcher_supervision_verdict() {
   # beacon just before dying with it). A fresh beacon alone therefore cannot
   # prove supervision here - require a live identity-matched daemon that still
   # owns this home, the same test the turn-end guard applies
-  # (fm_afk_daemon_owns_supervision). This turns "away flag set but no live
-  # daemon" into an immediate, loud no-afk-daemon verdict instead of a
-  # fresh-beacon blind window that only trips once the beacon decays.
+  # (fm_afk_daemon_owns_supervision). Ownership is tested BEFORE freshness so
+  # the verdict names the real failing condition at every beacon age: a reaped
+  # daemon reads as no-afk-daemon both inside the fresh-beacon blind window and
+  # long after the beacon decayed, which is the dominant case because the
+  # captain usually returns well after the reap. Only a daemon that still owns
+  # the home can fail on freshness alone.
   if [ -e "$state/.afk" ]; then
-    if [ "$fresh" != true ]; then
+    if ! fm_afk_daemon_owns_supervision "$state"; then
       # shellcheck disable=SC2034 # Read by callers after the function returns.
-      FM_WATCHER_VERDICT_REASON=stale-beacon
-    elif fm_afk_daemon_owns_supervision "$state"; then
+      FM_WATCHER_VERDICT_REASON=no-afk-daemon
+    elif [ "$fresh" = true ]; then
       # shellcheck disable=SC2034 # Read by callers after the function returns.
       FM_WATCHER_VERDICT_OK=true
     else
       # shellcheck disable=SC2034 # Read by callers after the function returns.
-      FM_WATCHER_VERDICT_REASON=no-afk-daemon
+      FM_WATCHER_VERDICT_REASON=stale-beacon
     fi
     return 0
   fi
