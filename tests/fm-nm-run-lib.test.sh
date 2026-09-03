@@ -344,6 +344,36 @@ test_runs_row_epoch_rejects_unusable_rows() {
   pass "an unusable runs-list row yields no age evidence"
 }
 
+# --- run identity behind the age evidence -----------------------------------
+#
+# The age evidence comes from a SECOND CLI call (`no-mistakes runs`), so the
+# row it is read from has to be proven to be the same run the first call
+# captured, or a replacement run started on the same branch between the two
+# calls lends its freshness to the stranded run being attributed.
+
+test_row_sha_correlates_with_the_run_head() {
+  # The live shape: both surfaces publish the run's head sha at the same width.
+  fm_nm_run_sha_correlates 7163ac0f 7163ac0f \
+    || fail "a row sha equal to the run head did not correlate"
+  # Neither surface fixes a width, so a prefix in either direction is the run.
+  fm_nm_run_sha_correlates 7163ac0fe3dd 7163ac0f \
+    || fail "a shorter row sha of the same commit did not correlate"
+  fm_nm_run_sha_correlates 7163ac0f 7163ac0fe3dd \
+    || fail "a longer row sha of the same commit did not correlate"
+  pass "a runs row for the captured run correlates with its head"
+}
+
+test_row_sha_of_another_run_does_not_correlate() {
+  fm_nm_run_sha_correlates 7163ac0f a1a1a1a1 \
+    && fail "a different run's row sha correlated with this run's head"
+  # Absence of evidence never correlates, in either position.
+  fm_nm_run_sha_correlates '' 7163ac0f \
+    && fail "an absent run head correlated with a row"
+  fm_nm_run_sha_correlates 7163ac0f '' \
+    && fail "an absent row sha correlated with a run head"
+  pass "a row from another run, or from no evidence at all, never correlates"
+}
+
 test_direct_child_state_is_read
 test_nested_state_never_grants_the_exemption
 test_nested_state_never_denies_a_real_exemption
@@ -367,5 +397,7 @@ test_custody_window_is_configurable
 test_malformed_custody_window_falls_back_to_the_default
 test_runs_row_epoch_parses_the_listed_date
 test_runs_row_epoch_rejects_unusable_rows
+test_row_sha_correlates_with_the_run_head
+test_row_sha_of_another_run_does_not_correlate
 
 echo "all fm-nm-run-lib tests passed"

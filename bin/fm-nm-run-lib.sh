@@ -203,6 +203,39 @@ fm_nm_custody_max_age_secs() {
   printf '%s' "$v"
 }
 
+# 0 if the `no-mistakes runs` row short sha $2 identifies the SAME run
+# instance as the `axi status` head $1 that is being attributed.
+#
+# The two are separate CLI calls, so a replacement run can start on the same
+# `fm/<id>` branch between them. Without this check the newest row's fresh
+# timestamp is applied to whatever older run the earlier call captured, and a
+# stranded pipeline-owned run keeps binding as `working` on a successor's
+# freshness - the exact supervision blind spot fm_nm_custody_age_fresh exists
+# to close.
+#
+# Both values are the run record's head sha (verified 2026-09-02 against the
+# installed no-mistakes v1.57.0: `axi status` printed `head: 7163ac0f` while
+# `no-mistakes runs` printed `7163ac0f` for that same run, and a run whose
+# submitted head differed still listed its head sha), so they are comparable
+# directly. Neither surface fixes a width, so the match is a prefix in either
+# direction rather than string equality.
+#
+# Two limits, both deliberate and both in the safe direction:
+#   - a pipeline that advances the run head between the two calls fails to
+#     correlate, the age evidence is withheld for that read alone, and the
+#     caller falls back to the pane and log, which SURFACE the crew; and
+#   - a replacement run started from the identical head is indistinguishable
+#     here, because the runs list publishes no run id to correlate on.
+# An empty head or an empty row sha never correlates: absence of evidence must
+# not grant the exemption.
+fm_nm_run_sha_correlates() {  # <run-head> <row-sha>
+  local head=${1:-} row_sha=${2:-}
+  [ -n "$head" ] && [ -n "$row_sha" ] || return 1
+  case "$head" in "$row_sha"*) return 0 ;; esac
+  case "$row_sha" in "$head"*) return 0 ;; esac
+  return 1
+}
+
 # Epoch seconds for the "<YYYY-MM-DD> <HH:MM>" date pair that opens $1, the
 # remainder of a `no-mistakes runs` row after its short sha. That list is the
 # only run-age evidence either caller can read: `axi status` carries no
@@ -271,7 +304,10 @@ fm_nm_custody_age_fresh() {  # <epoch>
 #   - the run is parked at a gate (fm_nm_run_is_gate_parked): the daemon wrote
 #     that gate, and parked never maps to working; or
 #   - run-started epoch $2 is inside the custody window
-#     (fm_nm_custody_age_fresh).
+#     (fm_nm_custody_age_fresh). $2 must be THIS run's own start time; a caller
+#     that reads it from a separate run-listing call correlates the row with
+#     this run through fm_nm_run_sha_correlates first, or a replacement run on
+#     the same branch lends its freshness to the stranded run captured here.
 # With neither, attribution is unknown and the caller falls back to the pane
 # and log, which surface a wedged crew instead of hiding it.
 #

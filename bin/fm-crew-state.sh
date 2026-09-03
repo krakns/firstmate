@@ -386,11 +386,19 @@ nm_runs_list() {
 # fm_nm_run_word_is_terminal so the word set is spelled once in
 # bin/fm-nm-run-lib.sh rather than copied here, so any other in-flight word the
 # CLI prints still yields the age evidence a live run is entitled to.
-# Empty when the branch has no listed row, its newest row is terminal, or that
-# row has no parseable date; fm_nm_custody_age_fresh treats all three as not
-# fresh.
-nm_branch_run_started_epoch() {  # <branch>
-  local branch=$1 out row st rest br
+#
+# That newest row must also BE the run being attributed, which is why <run-head>
+# is required: `axi status` and `runs` are separate calls, so a replacement run
+# can start on this same branch between them, and matching the branch alone
+# hands the successor's fresh timestamp to the stranded run the first call
+# captured. Identity is asked through fm_nm_run_sha_correlates, which owns the
+# rule and the evidence that the two surfaces publish the same head sha.
+#
+# Empty when the branch has no listed row, its newest row is terminal, its
+# newest row is a different run, or that row has no parseable date;
+# fm_nm_custody_age_fresh treats all four as not fresh.
+nm_branch_run_started_epoch() {  # <branch> <run-head>
+  local branch=$1 run_head=$2 out row st rest br sha
   out=$(nm_runs_list)
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
@@ -402,6 +410,8 @@ nm_branch_run_started_epoch() {  # <branch>
     [ "$br" = "$branch" ] || continue
     if fm_nm_run_word_is_terminal "$st"; then return 0; fi
     rest=$(trim "${rest#* }")
+    sha=${rest%% *}
+    fm_nm_run_sha_correlates "$run_head" "$sha" || return 0
     fm_nm_runs_row_epoch "$(trim "${rest#* }")" || true
     return 0
   done <<< "$out"
@@ -539,7 +549,8 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       nm_runs_prefetch
       if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
         && fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
-             "$(nm_branch_run_started_epoch "$CREW_BRANCH")"; then
+             "$(nm_branch_run_started_epoch "$CREW_BRANCH" \
+                  "$(strip_quotes "$(nm_field head)")")"; then
         HAVE_RUN=1
       else
         # The active-or-most-recent run is for another branch, or its
