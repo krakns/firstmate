@@ -1,0 +1,21 @@
+firstmate pipeline-custody exemption - end-to-end supervision surface
+before = 1c5c9c1 (pre-fix)   after = 34344f8 (post-fix)
+
+=== Finding 2: daemon died 30h ago, axi status still says running + pipeline_owned ===
+  before  fm-crew-state.sh demo-crew -> state: working · source: run-step · validating (running)
+  before  crew_absorb_class demo-crew -> working   (wake ABSORBED - crew invisible)
+  after   fm-crew-state.sh demo-crew -> state: working · source: status-log · pushed through the gate
+  after   crew_absorb_class demo-crew -> none   (wake SURFACES to the captain)
+
+=== Control: the same crew with a run created 10 minutes ago (legitimately working) ===
+  before  fm-crew-state.sh demo-crew -> state: working · source: run-step · validating (running)
+  before  crew_absorb_class demo-crew -> working   (wake ABSORBED - crew invisible)
+  after   fm-crew-state.sh demo-crew -> state: working · source: run-step · validating (running)
+  after   crew_absorb_class demo-crew -> working   (wake ABSORBED - crew invisible)
+
+=== Finding 1: branch_sync.state is 'synced'; a nested sub-block spoofs 'pipeline_owned' ===
+  before  fm-crew-state.sh demo-crew -> state: working · source: run-step · validating (running)
+  before  crew_absorb_class demo-crew -> working   (wake ABSORBED - crew invisible)
+  after   fm-crew-state.sh demo-crew -> state: working · source: status-log · pushed through the gate
+  after   crew_absorb_class demo-crew -> none   (wake SURFACES to the captain)
+

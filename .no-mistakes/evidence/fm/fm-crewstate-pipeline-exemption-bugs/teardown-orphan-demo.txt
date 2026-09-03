@@ -1,0 +1,31 @@
+firstmate teardown of a gate-parked, pipeline-owned run
+before = 1c5c9c1 (pre-fix)   after = 34344f8 (post-fix)
+
+=== before ===
+  teardown exit status: 0
+  no-mistakes commands teardown issued for the parked run:
+      (none) -> the parked run was ORPHANED, still holding a fleet slot
+  what teardown told the operator:
+
+=== after ===
+  teardown exit status: 0
+  no-mistakes commands teardown issued for the parked run:
+      abort --run 01RUN
+  what teardown told the operator:
+      teardown: no-mistakes run for task-x1 is parked at a gate; aborting before the worker is removed
+
+
+firstmate teardown preflight on stock macOS bash 3.2 with a missing backend adapter
+
+=== before ===
+  bash running teardown: 3.2.57(1)-release
+  teardown exit status: 0   <- reports SUCCESS for a teardown that refused nothing
+  what teardown told the operator:
+      /private/var/folders/c7/xbqg0t0s0bnbht6fw7_qf9km0000gn/T/fm-teardown-tests.7FcNxu/herdr-preflight-missing-adapter/test-root/bin/fm-backend.sh: line 609: /private/var/folders/c7/xbqg0t0s0bnbht6fw7_qf9km0000gn/T/fm-teardown-tests.7FcNxu/herdr-preflight-missing-adapter/test-root/bin/backends/herdr.sh: No such file or directory
+
+=== after ===
+  bash running teardown: 3.2.57(1)-release
+  teardown exit status: 1   <- refused, as it must
+  what teardown told the operator:
+      error: herdr teardown prerequisites are unavailable for task-x1; nothing was changed - restore the adapter and rerun teardown
+
