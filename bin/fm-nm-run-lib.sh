@@ -220,12 +220,19 @@ fm_nm_custody_max_age_secs() {
 # directly. Neither surface fixes a width, so the match is a prefix in either
 # direction rather than string equality.
 #
-# Two limits, both deliberate and both in the safe direction:
-#   - a pipeline that advances the run head between the two calls fails to
-#     correlate, the age evidence is withheld for that read alone, and the
-#     caller falls back to the pane and log, which SURFACE the crew; and
-#   - a replacement run started from the identical head is indistinguishable
-#     here, because the runs list publishes no run id to correlate on.
+# A pipeline that advances the run head between the two calls fails to
+# correlate; the age evidence is withheld for that read alone and the caller
+# falls back to the pane and log, which SURFACE the crew. That limit is
+# deliberate and in the safe direction.
+#
+# What this predicate CANNOT do, because the runs list publishes no run id: tell
+# a replacement run started from the identical head apart from the run it
+# replaced. A correlating sha is therefore necessary but not sufficient for
+# identity, and a caller scanning rows must also establish that the sha is
+# UNIQUE among the branch's in-flight rows before treating a row as this run's -
+# bin/fm-crew-state.sh's nm_branch_run_started_epoch owns that scan and yields
+# no evidence when two in-flight rows share the sha.
+#
 # An empty head or an empty row sha never correlates: absence of evidence must
 # not grant the exemption.
 fm_nm_run_sha_correlates() {  # <run-head> <row-sha>
@@ -306,7 +313,8 @@ fm_nm_custody_age_fresh() {  # <epoch>
 #   - run-started epoch $2 is inside the custody window
 #     (fm_nm_custody_age_fresh). $2 must be THIS run's own start time; a caller
 #     that reads it from a separate run-listing call correlates the row with
-#     this run through fm_nm_run_sha_correlates first, or a replacement run on
+#     this run through fm_nm_run_sha_correlates first, and passes nothing when
+#     that sha does not identify a single in-flight run, or a replacement run on
 #     the same branch lends its freshness to the stranded run captured here.
 # With neither, attribution is unknown and the caller falls back to the pane
 # and log, which surface a wedged crew instead of hiding it.

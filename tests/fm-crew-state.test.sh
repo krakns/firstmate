@@ -1560,6 +1560,47 @@ EOF
   pass "custody freshness never crosses run identities"
 }
 
+# The head sha is the only identity the runs list publishes, so it identifies a
+# run only while it is UNIQUE among the branch's in-flight rows. A replacement
+# run started from the SAME commit as the stranded one produces two non-terminal
+# rows carrying the same sha: the newest is the successor's fresh timestamp, the
+# older is the stranded run `axi status` actually captured, and a head match
+# alone cannot tell them apart. Guessing the newest would restore the blind spot
+# the age bound exists to close, so an ambiguous head withholds the evidence and
+# the crew surfaces through its pane and status log instead.
+test_same_head_replacement_run_cannot_lend_its_freshness() {
+  reset_fakes
+  local d out; d=$(new_case f10-same-head-custody)
+  make_repo_on_branch "$d/wt" fm/feat-f10q
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-f10q.meta" "window=fm:fm-feat-f10q" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10q.status"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10q f0f0f0f0)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 600)
+  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 108000)
+EOF
+)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10q
+
+  out=$(run_crew_state "$d" feat-f10q)
+  assert_not_contains "$out" "source: run-step" \
+    "a stranded run borrowed a same-head replacement run's freshness"
+
+  # The harm that would follow: absorbing every wake from the wedged crew.
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10q \
+    && fail "a stranded run was provably working on a same-head replacement's timestamp"
+
+  # Control: one in-flight row at that head is unambiguous, so the same fresh
+  # evidence still binds. The rule withholds only what it cannot identify.
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 600)"
+  out=$(run_crew_state "$d" feat-f10q)
+  assert_contains "$out" "state: working" "an unambiguous fresh row must still bind"
+  assert_contains "$out" "source: run-step" "an unambiguous fresh row must still bind the run-step"
+  pass "an ambiguous same-head in-flight row withholds custody age evidence"
+}
+
 # Both runs-list readers - the custody age bound and the coarse scan - run
 # inside command substitutions, so a reader that memoizes itself loses the
 # capture with its own subshell and every consumer pays another bounded CLI
@@ -1813,6 +1854,7 @@ test_pipeline_owned_active_run_beats_superseded_failed_row
 test_stranded_pipeline_owned_run_stops_reading_working
 test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness
 test_stranded_run_cannot_borrow_a_replacement_runs_freshness
+test_same_head_replacement_run_cannot_lend_its_freshness
 test_runs_list_is_fetched_once_per_invocation
 test_non_terminal_runs_row_still_yields_custody_age
 test_coarse_fresh_unresolvable_active_row_still_stops

@@ -394,11 +394,27 @@ nm_runs_list() {
 # captured. Identity is asked through fm_nm_run_sha_correlates, which owns the
 # rule and the evidence that the two surfaces publish the same head sha.
 #
+# A head sha identifies a run only while it is UNIQUE among the branch's
+# IN-FLIGHT rows, so the whole list is scanned rather than just its head. A
+# replacement run started from the SAME commit as the stranded one lists two
+# non-terminal rows carrying that one sha - the successor's fresh timestamp and
+# the stranded run `axi status` actually captured - and the runs list publishes
+# no run id to tell them apart. Taking the newest would hand the successor's
+# freshness to the stranded run and restore the exact supervision blind spot the
+# age bound closes, so an ambiguous sha yields NO evidence at all. Terminal rows
+# do not create that ambiguity: a run that reached a terminal word has released
+# the branch and is not a candidate for the active run being attributed.
+#
+# Withholding costs a genuinely live crew its run-step attribution for as long
+# as an older in-flight row sits at the same sha, and it falls back to the pane
+# and status log, which SURFACE the crew. That is the same direction every other
+# denial here takes, and the opposite of the harm being prevented.
+#
 # Empty when the branch has no listed row, its newest row is terminal, its
-# newest row is a different run, or that row has no parseable date;
-# fm_nm_custody_age_fresh treats all four as not fresh.
+# newest row is a different run, its sha is ambiguous, or that row has no
+# parseable date; fm_nm_custody_age_fresh treats all five as not fresh.
 nm_branch_run_started_epoch() {  # <branch> <run-head>
-  local branch=$1 run_head=$2 out row st rest br sha
+  local branch=$1 run_head=$2 out row st rest br sha newest="" seen=0
   out=$(nm_runs_list)
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
@@ -408,14 +424,21 @@ nm_branch_run_started_epoch() {  # <branch> <run-head>
     rest=$(trim "${row#* }")
     br=${rest%% *}
     [ "$br" = "$branch" ] || continue
-    if fm_nm_run_word_is_terminal "$st"; then return 0; fi
     rest=$(trim "${rest#* }")
     sha=${rest%% *}
-    fm_nm_run_sha_correlates "$run_head" "$sha" || return 0
-    fm_nm_runs_row_epoch "$(trim "${rest#* }")" || true
-    return 0
+    if [ "$seen" = 0 ]; then
+      seen=1
+      if fm_nm_run_word_is_terminal "$st"; then return 0; fi
+      fm_nm_run_sha_correlates "$run_head" "$sha" || return 0
+      newest=$(trim "${rest#* }")
+      continue
+    fi
+    if fm_nm_run_word_is_terminal "$st"; then continue; fi
+    # A second in-flight row at the same sha: identity is unresolvable.
+    if fm_nm_run_sha_correlates "$run_head" "$sha"; then return 0; fi
   done <<< "$out"
-  return 0
+  [ -n "$newest" ] || return 0
+  fm_nm_runs_row_epoch "$newest" || true
 }
 
 # Coarse fallback for cross-branch attribution. `no-mistakes axi status` (bare)
