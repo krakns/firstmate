@@ -1,0 +1,14 @@
+bin/fm-backend.sh: fm_backend_source with a missing adapter file, under `set -e`,
+on stock macOS /bin/bash 3.2 - the way bin/fm-teardown.sh and every other
+consumer runs. Pre-fix the `.` special-builtin failure TERMINATES the shell, so
+the caller never sees a refusal and never reaches its next preflight step.
+
+--- PRE-FIX (d22318e) ---
+/tmp/fm-exempt-evidence.Ap7yjd/backend-base/bin/fm-backend.sh: line 609: /tmp/fm-exempt-evidence.Ap7yjd/backend-base/bin/backends/herdr.sh: No such file or directory
+shell exit status: 1
+
+--- POST-FIX (5fb0827) ---
+refusal reached the caller: fm_backend_source returned non-zero
+caller continued to its next preflight step
+shell exit status: 0
+stock shell: GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)

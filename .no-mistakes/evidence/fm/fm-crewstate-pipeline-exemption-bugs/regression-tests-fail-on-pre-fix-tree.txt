@@ -1,0 +1,16 @@
+The new regression tests run UNCHANGED against the pre-fix tree (d22318e).
+Each script stops at its first failure, so the first failing assertion is the
+named product defect the fix removes.
+
+--- tests/fm-nm-run-lib.test.sh on d22318e (Finding 1 parser anchor) ---
+ok - branch_sync.state reads the block's own scalar
+not ok - a nested state: was read as the custody label ('pipeline_owned')
+
+--- tests/fm-teardown.test.sh on d22318e (carried-along bash 3.2 adapter fix) ---
+ok - herdr flat teardown refuses before returning the isolated copy under lock contention and the retry completes cleanly
+ok - herdr flat teardown never erases records when pane presence is unparseable
+not ok - herdr-preflight-missing-adapter: teardown continued without its required preflight
+
+(the Finding 3 teardown case is shown end to end in
+ teardown-parked-pipeline-owned-pre-vs-post.txt; Findings 1, 2 and 4 are shown at the
+ supervision surface in supervision-surface-pre-vs-post.txt)

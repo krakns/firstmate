@@ -1,0 +1,58 @@
+bin/fm-teardown.sh concluding a task-owned run parked at a pipeline-owned lane head
+Same fixture, same fake `no-mistakes`, run against both trees.
+================ PRE-FIX (d22318e) ================
+teardown exit status: 0
+
+--- `no-mistakes axi status` the daemon reported for this task ---
+run:
+  id: "01RUN"
+  branch: fm/task-x1
+  status: awaiting_approval
+  awaiting_agent: parked 7h39m
+  head: "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+  pr: ""
+  findings: none
+gate: review
+branch_sync:
+  state: pipeline_owned
+  local:
+    branch: fm/task-x1
+    state: dirty
+
+--- worktree HEAD (the lane head f0f0f0f0... is not a git object here) ---
+0f79e48b2f69ad71b0619a2ead5dbf16194504a1
+
+--- commands sent to `no-mistakes axi abort` during teardown ---
+(none - the parked run was ORPHANED: it keeps holding a fleet slot
+ at a gate nobody is left to answer)
+
+--- teardown stderr (run-conclusion lines) ---
+(no run-conclusion line printed)
+
+================ POST-FIX (5fb0827) ================
+teardown exit status: 0
+
+--- `no-mistakes axi status` the daemon reported for this task ---
+run:
+  id: "01RUN"
+  branch: fm/task-x1
+  status: awaiting_approval
+  awaiting_agent: parked 7h39m
+  head: "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+  pr: ""
+  findings: none
+gate: review
+branch_sync:
+  state: pipeline_owned
+  local:
+    branch: fm/task-x1
+    state: dirty
+
+--- worktree HEAD (the lane head f0f0f0f0... is not a git object here) ---
+a487ef0dda66b076bfe43ccbd4c19df441841cb6
+
+--- commands sent to `no-mistakes axi abort` during teardown ---
+abort --run 01RUN
+
+--- teardown stderr (run-conclusion lines) ---
+teardown: no-mistakes run for task-x1 is parked at a gate; aborting before the worker is removed

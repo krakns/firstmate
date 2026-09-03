@@ -1,0 +1,65 @@
+firstmate pipeline-custody exemption - end-to-end supervision surface
+pre-fix tree  : d22318e (base)
+post-fix tree : 5fb0827 (branch tip)
+FM_NM_CUSTODY_MAX_AGE_SECS default = 21600 (6h)
+
+FINDING 2 (highest priority): daemon died 30h ago without writing an outcome
+----------------------------------------------------------------------------
+
+`no-mistakes axi status` says: status: running, branch_sync.state: pipeline_owned, head f0f0f0f0 (not a git object here)
+pane is idle, last status-log line is "working: pushed through the gate"
+
+`no-mistakes runs` newest row is 30h old:
+  running    fm/wedged-crew f0f0f0f0  2026-09-01 12:41
+
+  PRE-FIX   age=30h     | state: working · source: run-step · validating (running) | absorb_class=working / provably_working=yes
+  POST-FIX  age=30h     | state: working · source: status-log · pushed through the gate | absorb_class=none / provably_working=no
+
+same crew, same unresolvable head, runs row 10 minutes old:
+  running    fm/wedged-crew f0f0f0f0  2026-09-02 18:31
+
+  PRE-FIX   age=10m     | state: working · source: run-step · validating (running) | absorb_class=working / provably_working=yes
+  POST-FIX  age=10m     | state: working · source: run-step · validating (running) | absorb_class=working / provably_working=yes
+
+FINDING 1: a nested branch_sync sub-block must not decide the exemption
+-----------------------------------------------------------------------
+
+(a) FALSE GRANT: nested `pipeline: state: pipeline_owned` ahead of the real `state: synced`
+    the pipeline does NOT own the branch, so the head rule must still reject the run
+
+  PRE-FIX   nested-grant | state: working · source: run-step · validating (running) | absorb_class=working / provably_working=yes
+  POST-FIX  nested-grant | state: working · source: status-log · pushed through the gate | absorb_class=none / provably_working=no
+
+(b) FALSE DENY: nested `pipeline: state: dirty` ahead of the real `state: pipeline_owned`
+    the pipeline DOES own the branch, so the live run must be attributed
+
+  PRE-FIX   nested-deny | state: working · source: status-log · pushed through the gate | absorb_class=none / provably_working=no
+  POST-FIX  nested-deny | state: working · source: run-step · validating (running) | absorb_class=working / provably_working=yes
+
+FINDING 4: coarse runs-list scan for a live pipeline-owned crew on another branch
+---------------------------------------------------------------------------------
+
+another crew holds the axi-status slot; this crew appears only as a coarse runs row
+with an unresolvable short sha (equally the signature of another clone or a retried task):
+  running    fm/other-crew aaaaaaa  2026-09-02 18:36
+  running    fm/coarse-crew f0f0f0f0  2026-09-02 18:31
+
+  PRE-FIX   coarse      | state: working · source: status-log · pushed through the gate | absorb_class=none / provably_working=no
+  POST-FIX  coarse      | state: working · source: status-log · pushed through the gate | absorb_class=none / provably_working=no
+
+(the coarse row carries no pipeline_owned custody label, so by decision it never binds;
+ it falls to the status log, which SURFACES the crew rather than absorbing its wakes)
+
+FINDING 2 boundary: where the 6h custody window actually falls (post-fix tree)
+------------------------------------------------------------------------------
+  run age 359m     | state: working · source: run-step · validating (running)
+  run age 361m     | state: working · source: status-log · pushed through the gate
+
+  FM_NM_CUSTODY_MAX_AGE_SECS override, same 30h stranded run (30h = 108000s):
+  window=(default 21600) | state: working · source: status-log · pushed through the gate
+  window=120000       | state: working · source: run-step · validating (running)
+  window=not-a-number | state: working · source: status-log · pushed through the gate
+
+FINDING 3: teardown concluding a task-owned parked run at a pipeline-owned lane head
+------------------------------------------------------------------------------------
+see the companion transcript teardown-parked-pipeline-owned-pre-vs-post.txt
