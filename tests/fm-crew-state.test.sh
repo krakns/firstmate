@@ -1401,19 +1401,35 @@ test_local_advanced_past_run_head_invalidates() {
 #
 # That exemption is BOUNDED on run age, because `axi status` keeps reporting
 # `running` + `pipeline_owned` after a daemon dies without writing an outcome.
-# The runs list is the only place a run's age is published, so these fixtures
-# date their rows deliberately: runs_date_ago 600 is a live run inside the
-# custody window, runs_date_ago 108000 is a stranded one outside it.
+# A run's age is its own creation time, decoded from the ULID run id in the
+# very output being attributed, so these fixtures date the RUN ID deliberately:
+# ulid_ago 600 is a live run inside the custody window, ulid_ago 108000 is a
+# stranded one outside it. The `no-mistakes runs` rows in these cases date
+# other runs, and exist to prove that no listed row's freshness can stand in
+# for the captured run's own.
 runs_date_ago() {  # <seconds-before-now>
   local now epoch
   now=$(date +%s)
   epoch=$((now - $1))
   date -r "$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$epoch" '+%Y-%m-%d %H:%M'
 }
-run_running_pipeline_owned() {  # <branch> <head> [<sync-state>]
+# A ULID whose timestamp prefix is <seconds> in the past: the id `axi status`
+# reports for a run created then. The trailing 16 characters are a ULID's
+# random component and carry no meaning here.
+ulid_ago() {  # <seconds-before-now>
+  local a='0123456789ABCDEFGHJKMNPQRSTVWXYZ' ms out='' i=0
+  ms=$(( ( $(date +%s) - $1 ) * 1000 ))
+  while [ "$i" -lt 10 ]; do
+    out="${a:$((ms % 32)):1}$out"
+    ms=$((ms / 32))
+    i=$((i + 1))
+  done
+  printf '%s0123456789ABCDEF' "$out"
+}
+run_running_pipeline_owned() {  # <branch> <head> [<sync-state>] [<age-secs>]
   cat <<EOF
 run:
-  id: "01RUNLIVE"
+  id: "$(ulid_ago "${4:-600}")"
   branch: $1
   status: running
   head: "$2"
@@ -1471,7 +1487,7 @@ test_stranded_pipeline_owned_run_stops_reading_working() {
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-f10s.meta" "window=fm:fm-feat-f10s" "worktree=$d/wt" "kind=ship" "harness=claude"
   printf 'working: pushed through the gate\n' > "$d/state/feat-f10s.status"
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10s f0f0f0f0)"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10s f0f0f0f0 pipeline_owned 108000)"
   FM_FAKE_RUNS_LIST="  running    fm/feat-f10s f0f0f0f0  $(runs_date_ago 108000)"
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10s
@@ -1484,46 +1500,23 @@ test_stranded_pipeline_owned_run_stops_reading_working() {
   PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10s \
     && fail "a stranded pipeline-owned run was still treated as provably working"
 
-  # Same crew, same unresolvable head, run age inside the window: still working.
-  FM_FAKE_RUNS_LIST="  running    fm/feat-f10s f0f0f0f0  $(runs_date_ago 600)"
+  # Same crew, same unresolvable head, run created inside the window: working.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10s f0f0f0f0 pipeline_owned 600)"
   out=$(run_crew_state "$d" feat-f10s)
   assert_contains "$out" "state: working" "a live pipeline-owned run must still read working"
   assert_contains "$out" "source: run-step" "a live pipeline-owned run must still bind the run-step"
   pass "a stranded pipeline-owned run stops reading working while a live one still binds"
 }
 
-# The custody age evidence must come from a still-running newest row. When this
-# branch's newest run has already reached a terminal word, the run `axi status`
-# still calls active has been superseded, and it must not borrow the newer row's
-# freshness to keep binding.
-test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness() {
-  reset_fakes
-  local d out; d=$(new_case f10-superseded-custody)
-  make_repo_on_branch "$d/wt" fm/feat-f10g
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-f10g.meta" "window=fm:fm-feat-f10g" "worktree=$d/wt" "kind=ship" "harness=claude"
-  printf 'working: pushed through the gate\n' > "$d/state/feat-f10g.status"
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10g f0f0f0f0)"
-  FM_FAKE_RUNS_LIST="$(cat <<EOF
-  failed     fm/feat-f10g f0f0f0f0  $(runs_date_ago 600)
-  running    fm/feat-f10g f0f0f0f0  $(runs_date_ago 108000)
-EOF
-)"
-  FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" feat-f10g
-  out=$(run_crew_state "$d" feat-f10g)
-  assert_not_contains "$out" "source: run-step" \
-    "a superseded pipeline-owned run borrowed a newer terminal row's freshness"
-  pass "custody freshness comes from a still-running newest row, never a newer terminal one"
-}
-
-# The custody age row must be the SAME RUN that `axi status` reported. Those
-# are two separate CLI calls, so a replacement run can start on this crew's
-# branch between them: the newest row is then the successor, and matching on
-# branch alone hands its fresh timestamp to the stranded run the first call
-# captured. That would restore the exact blind spot the age bound exists to
-# close - the stranded run reads working from the run-step source and
-# supervision absorbs the crew's wakes for the whole custody window.
+# A run's freshness must never cross run identities. `axi status` and
+# `no-mistakes runs` are separate calls, so a replacement run can start on this
+# crew's branch between them, and the listed rows then describe a run that is
+# not the one being attributed - at its own head, or at the identical head when
+# it was started from the same commit. Reading a row's date as the captured
+# run's age would restore the exact blind spot the age bound exists to close:
+# the stranded run reads working from the run-step source and supervision
+# absorbs the crew's wakes for the whole custody window. The captured run's own
+# id is the only age evidence that cannot be a different run's.
 test_stranded_run_cannot_borrow_a_replacement_runs_freshness() {
   reset_fakes
   local d out; d=$(new_case f10-replacement-custody)
@@ -1531,18 +1524,18 @@ test_stranded_run_cannot_borrow_a_replacement_runs_freshness() {
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-f10r.meta" "window=fm:fm-feat-f10r" "worktree=$d/wt" "kind=ship" "harness=claude"
   printf 'working: pushed through the gate\n' > "$d/state/feat-f10r.status"
-  # `axi status` captured the STRANDED run (head f0f0f0f0, 30h old); the runs
-  # list already shows a fresh replacement run on the same branch at its own
-  # head.
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10r f0f0f0f0)"
+  # `axi status` captured the STRANDED run (head f0f0f0f0, created 30h ago);
+  # the runs list already shows a fresh replacement run on the same branch.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10r f0f0f0f0 pipeline_owned 108000)"
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-f10r
+
+  # Shape 1: the replacement runs at its own head.
   FM_FAKE_RUNS_LIST="$(cat <<EOF
   running    fm/feat-f10r a1a1a1a1  $(runs_date_ago 600)
   running    fm/feat-f10r f0f0f0f0  $(runs_date_ago 108000)
 EOF
 )"
-  FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" feat-f10r
-
   out=$(run_crew_state "$d" feat-f10r)
   assert_not_contains "$out" "source: run-step" \
     "a stranded run borrowed a replacement run's freshness through a branch-only age match"
@@ -1551,61 +1544,61 @@ EOF
   PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10r \
     && fail "a stranded run was provably working on a replacement run's timestamp"
 
-  # Control: once `axi status` reports the replacement run itself, that same
-  # fresh row is its own evidence and the exemption binds again.
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10r a1a1a1a1)"
+  # Shape 2: the replacement was started from the SAME commit, so both in-flight
+  # rows carry the stranded run's head and no row can be told from the other.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-f10r f0f0f0f0  $(runs_date_ago 600)
+  running    fm/feat-f10r f0f0f0f0  $(runs_date_ago 108000)
+EOF
+)"
   out=$(run_crew_state "$d" feat-f10r)
-  assert_contains "$out" "state: working" "the replacement run's own fresh row must still bind"
+  assert_not_contains "$out" "source: run-step" \
+    "a stranded run borrowed a same-head replacement run's freshness"
+
+  # Control: once `axi status` reports the replacement run itself, that run's
+  # own id is fresh and the exemption binds again.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10r a1a1a1a1 pipeline_owned 600)"
+  out=$(run_crew_state "$d" feat-f10r)
+  assert_contains "$out" "state: working" "the replacement run's own fresh id must still bind"
   assert_contains "$out" "source: run-step" "the replacement run binds through the run-step source"
   pass "custody freshness never crosses run identities"
 }
 
-# The head sha is the only identity the runs list publishes, so it identifies a
-# run only while it is UNIQUE among the branch's in-flight rows. A replacement
-# run started from the SAME commit as the stranded one produces two non-terminal
-# rows carrying the same sha: the newest is the successor's fresh timestamp, the
-# older is the stranded run `axi status` actually captured, and a head match
-# alone cannot tell them apart. Guessing the newest would restore the blind spot
-# the age bound exists to close, so an ambiguous head withholds the evidence and
-# the crew surfaces through its pane and status log instead.
-test_same_head_replacement_run_cannot_lend_its_freshness() {
+# The same crossing, hidden by the bounded runs window. `no-mistakes runs` is
+# fetched with a row limit, so a stranded run whose row has been pushed past
+# that limit by newer fleet runs is simply absent while its fresh same-branch,
+# same-head replacement is still listed. Any rule that reads a listed row as
+# the captured run's age then sees one unambiguous fresh row and reports the
+# wedged crew as working - a truncated list cannot even detect the ambiguity it
+# is hiding. The run id in the captured output is not subject to that window.
+test_stranded_run_cannot_borrow_freshness_from_a_truncated_runs_list() {
   reset_fakes
-  local d out; d=$(new_case f10-same-head-custody)
-  make_repo_on_branch "$d/wt" fm/feat-f10q
+  local d out; d=$(new_case f10-truncated-custody)
+  make_repo_on_branch "$d/wt" fm/feat-f10t
   make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-f10q.meta" "window=fm:fm-feat-f10q" "worktree=$d/wt" "kind=ship" "harness=claude"
-  printf 'working: pushed through the gate\n' > "$d/state/feat-f10q.status"
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10q f0f0f0f0)"
-  FM_FAKE_RUNS_LIST="$(cat <<EOF
-  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 600)
-  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 108000)
-EOF
-)"
+  fm_write_meta "$d/state/feat-f10t.meta" "window=fm:fm-feat-f10t" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: pushed through the gate\n' > "$d/state/feat-f10t.status"
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10t f0f0f0f0 pipeline_owned 108000)"
+  # One row fits in the window, and it is the replacement: the stranded run
+  # `axi status` captured fell off the end of the list entirely.
+  export FM_CREW_STATE_RUNS_LIMIT=1
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10t f0f0f0f0  $(runs_date_ago 600)"
   FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" feat-f10q
+  arm_idle_record "$d/state" feat-f10t
 
-  out=$(run_crew_state "$d" feat-f10q)
+  out=$(run_crew_state "$d" feat-f10t)
   assert_not_contains "$out" "source: run-step" \
-    "a stranded run borrowed a same-head replacement run's freshness"
-
-  # The harm that would follow: absorbing every wake from the wedged crew.
-  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10q \
-    && fail "a stranded run was provably working on a same-head replacement's timestamp"
-
-  # Control: one in-flight row at that head is unambiguous, so the same fresh
-  # evidence still binds. The rule withholds only what it cannot identify.
-  FM_FAKE_RUNS_LIST="  running    fm/feat-f10q f0f0f0f0  $(runs_date_ago 600)"
-  out=$(run_crew_state "$d" feat-f10q)
-  assert_contains "$out" "state: working" "an unambiguous fresh row must still bind"
-  assert_contains "$out" "source: run-step" "an unambiguous fresh row must still bind the run-step"
-  pass "an ambiguous same-head in-flight row withholds custody age evidence"
+    "a stranded run borrowed freshness from the only row a truncated list still showed"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" crew_is_provably_working feat-f10t \
+    && fail "a truncated runs list made a stranded run provably working"
+  unset FM_CREW_STATE_RUNS_LIMIT
+  pass "a truncated runs list cannot lend a stranded run someone else's freshness"
 }
 
-# Both runs-list readers - the custody age bound and the coarse scan - run
-# inside command substitutions, so a reader that memoizes itself loses the
-# capture with its own subshell and every consumer pays another bounded CLI
-# call. The deny path runs both, and it must still cost exactly one `runs`
-# call; a head match must cost none.
+# The runs list has exactly one reader left - the coarse cross-branch scan -
+# and the pipeline-custody exemption reads none of it, so a crew-state read
+# costs at most one bounded `runs` call: one when attribution falls through to
+# the coarse scan, none when the run's head matches this worktree.
 test_runs_list_is_fetched_once_per_invocation() {
   reset_fakes
   local d calls; d=$(new_case f10-runs-fetch-count)
@@ -1617,9 +1610,9 @@ test_runs_list_is_fetched_once_per_invocation() {
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10m
 
-  # Deny path: unresolvable head, stranded age - the custody lookup runs, the
-  # exemption is denied, and the coarse scan runs after it.
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10m f0f0f0f0)"
+  # Deny path: unresolvable head, stranded run age - the exemption is denied
+  # without reading the list, and the coarse scan runs after it.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10m f0f0f0f0 pipeline_owned 108000)"
   FM_FAKE_RUNS_LIST="  running    fm/feat-f10m f0f0f0f0  $(runs_date_ago 108000)"
   run_crew_state "$d" feat-f10m >/dev/null
   calls=$(wc -l < "$d/runs.calls" | tr -d ' ')
@@ -1632,28 +1625,6 @@ test_runs_list_is_fetched_once_per_invocation() {
   calls=$(wc -l < "$d/runs.calls" | tr -d ' ')
   [ "$calls" = 0 ] || fail "a head-matched run made $calls runs-list calls, expected 0"
   pass "the runs list is fetched once on the deny path and never on a head match"
-}
-
-# Custody age evidence is withheld only from a TERMINAL newest row, not from
-# every word that is not literally "running". `active` is fm_nm_run_is_active's
-# word and means the complement of completed/failed/cancelled, so an in-flight
-# word this file does not enumerate must still yield the run's age - otherwise a
-# genuinely live pipeline-owned crew loses attribution and surfaces as stale.
-test_non_terminal_runs_row_still_yields_custody_age() {
-  reset_fakes
-  local d out; d=$(new_case f10-nonterminal-age)
-  make_repo_on_branch "$d/wt" fm/feat-f10n
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-f10n.meta" "window=fm:fm-feat-f10n" "worktree=$d/wt" "kind=ship" "harness=claude"
-  printf 'working: pushed through the gate\n' > "$d/state/feat-f10n.status"
-  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10n f0f0f0f0)"
-  FM_FAKE_RUNS_LIST="  fixing     fm/feat-f10n f0f0f0f0  $(runs_date_ago 600)"
-  FM_FAKE_BUSY=0
-  arm_idle_record "$d/state" feat-f10n
-  out=$(run_crew_state "$d" feat-f10n)
-  assert_contains "$out" "state: working" "a fresh non-terminal row must still attribute a live custody run"
-  assert_contains "$out" "source: run-step" "a non-terminal runs-list word must still yield age evidence"
-  pass "custody age evidence is withheld only from a terminal newest row"
 }
 
 # The coarse runs-list scan carries no branch_sync object, so it has no
@@ -1852,11 +1823,9 @@ test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_pipeline_owned_active_run_beats_superseded_failed_row
 test_stranded_pipeline_owned_run_stops_reading_working
-test_superseded_pipeline_owned_run_cannot_borrow_a_newer_rows_freshness
 test_stranded_run_cannot_borrow_a_replacement_runs_freshness
-test_same_head_replacement_run_cannot_lend_its_freshness
+test_stranded_run_cannot_borrow_freshness_from_a_truncated_runs_list
 test_runs_list_is_fetched_once_per_invocation
-test_non_terminal_runs_row_still_yields_custody_age
 test_coarse_fresh_unresolvable_active_row_still_stops
 test_failed_run_with_no_later_run_still_surfaces
 test_coarse_unresolvable_active_row_never_falls_to_older_row

@@ -74,17 +74,19 @@ META="$STATE/$ID.meta"
 LOG="$STATE/$ID.status"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
-# How many of the most recent `no-mistakes runs` rows nm_runs_prefetch below
-# asks for. That single fetch feeds BOTH readers of the list: the cross-branch
-# coarse fallback (nm_runs_status_for_branch) and the pipeline-custody age
-# lookup (nm_branch_run_started_epoch), so this value bounds how far back
-# either one can see. Generous enough to still find a branch's own run on a
-# busy multi-crew fleet without listing the entire history every call.
+# How many of the most recent `no-mistakes runs` rows nm_runs_list below asks
+# for. Its one reader is the cross-branch coarse fallback
+# (nm_runs_status_for_branch), so this value bounds how far back that scan can
+# see. Generous enough to still find a branch's own run on a busy multi-crew
+# fleet without listing the entire history every call.
 #
 # The failure mode to look for when a live crew reads stale: a branch whose row
-# has been pushed past this limit by a busy fleet yields no age evidence, so the
-# custody exemption is denied and the crew falls back to its pane and status log
-# even though its run is genuinely running.
+# has been pushed past this limit by a busy fleet gets no coarse attribution at
+# all, and the crew falls back to its pane and status log even though its run
+# is genuinely running. That bound is deliberately kept off the
+# pipeline-custody exemption, whose age evidence comes from the captured run's
+# own id rather than from any listed row - a run-identity question a truncated
+# list cannot answer.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
@@ -354,91 +356,14 @@ nm_ci_checks_state() {
   esac
 }
 
-# The runs list is read at most once per invocation: both the coarse
-# attribution scan and the pipeline-custody age bound below read the same rows,
-# and a second bounded CLI call would just double the wait for identical output.
-#
-# The fetch CANNOT memoize itself from inside nm_runs_list, because both
-# consumers are invoked in command substitutions: the assignment would happen
-# in that subshell and be discarded with it, so a self-memoizing reader fetches
-# once per consumer. nm_runs_prefetch is therefore called once from the
-# attribution block below, in the parent shell, on the only path that needs the
-# list at all (the head match failed); nm_runs_list only ever prints what that
-# call captured, and prints empty when no fetch happened.
-NM_RUNS_OUT=""
-NM_RUNS_FETCHED=0
-nm_runs_prefetch() {
-  if [ "$NM_RUNS_FETCHED" != 1 ]; then
-    NM_RUNS_OUT=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
-    NM_RUNS_FETCHED=1
-  fi
-}
+# The `no-mistakes runs` rows, fetched once for the one reader that needs them
+# (the coarse cross-branch scan below). The pipeline-custody age bound does NOT
+# read this list: a run's age comes from its own id in the `axi status` output
+# being attributed (fm_nm_run_started_epoch in bin/fm-nm-run-lib.sh owns that
+# and the reason a listed row cannot supply it), so the head-match path and the
+# custody path both cost zero runs calls.
 nm_runs_list() {
-  printf '%s' "$NM_RUNS_OUT"
-}
-
-# Epoch seconds of the NEWEST runs-list row for <branch>: the run-age evidence
-# the pipeline-custody exemption is bounded on (`axi status` carries no
-# timestamp). Only a NOT-TERMINAL newest row yields evidence - if this branch's
-# newest run already reached a terminal word, the active run `axi status`
-# reports has been superseded and must not borrow the newer row's freshness.
-# Terminal is the complement of active, asked through
-# fm_nm_run_word_is_terminal so the word set is spelled once in
-# bin/fm-nm-run-lib.sh rather than copied here, so any other in-flight word the
-# CLI prints still yields the age evidence a live run is entitled to.
-#
-# That newest row must also BE the run being attributed, which is why <run-head>
-# is required: `axi status` and `runs` are separate calls, so a replacement run
-# can start on this same branch between them, and matching the branch alone
-# hands the successor's fresh timestamp to the stranded run the first call
-# captured. Identity is asked through fm_nm_run_sha_correlates, which owns the
-# rule and the evidence that the two surfaces publish the same head sha.
-#
-# A head sha identifies a run only while it is UNIQUE among the branch's
-# IN-FLIGHT rows, so the whole list is scanned rather than just its head. A
-# replacement run started from the SAME commit as the stranded one lists two
-# non-terminal rows carrying that one sha - the successor's fresh timestamp and
-# the stranded run `axi status` actually captured - and the runs list publishes
-# no run id to tell them apart. Taking the newest would hand the successor's
-# freshness to the stranded run and restore the exact supervision blind spot the
-# age bound closes, so an ambiguous sha yields NO evidence at all. Terminal rows
-# do not create that ambiguity: a run that reached a terminal word has released
-# the branch and is not a candidate for the active run being attributed.
-#
-# Withholding costs a genuinely live crew its run-step attribution for as long
-# as an older in-flight row sits at the same sha, and it falls back to the pane
-# and status log, which SURFACE the crew. That is the same direction every other
-# denial here takes, and the opposite of the harm being prevented.
-#
-# Empty when the branch has no listed row, its newest row is terminal, its
-# newest row is a different run, its sha is ambiguous, or that row has no
-# parseable date; fm_nm_custody_age_fresh treats all five as not fresh.
-nm_branch_run_started_epoch() {  # <branch> <run-head>
-  local branch=$1 run_head=$2 out row st rest br sha newest="" seen=0
-  out=$(nm_runs_list)
-  [ -n "$out" ] || return 0
-  while IFS= read -r row; do
-    row=$(trim "$row")
-    [ -n "$row" ] || continue
-    st=${row%% *}
-    rest=$(trim "${row#* }")
-    br=${rest%% *}
-    [ "$br" = "$branch" ] || continue
-    rest=$(trim "${rest#* }")
-    sha=${rest%% *}
-    if [ "$seen" = 0 ]; then
-      seen=1
-      if fm_nm_run_word_is_terminal "$st"; then return 0; fi
-      fm_nm_run_sha_correlates "$run_head" "$sha" || return 0
-      newest=$(trim "${rest#* }")
-      continue
-    fi
-    if fm_nm_run_word_is_terminal "$st"; then continue; fi
-    # A second in-flight row at the same sha: identity is unresolvable.
-    if fm_nm_run_sha_correlates "$run_head" "$sha"; then return 0; fi
-  done <<< "$out"
-  [ -n "$newest" ] || return 0
-  fm_nm_runs_row_epoch "$newest" || true
+  nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT"
 }
 
 # Coarse fallback for cross-branch attribution. `no-mistakes axi status` (bare)
@@ -503,10 +428,11 @@ nm_runs_status_for_branch() {  # <branch>
         # remove, so the safe stop wins over the attribution.
         #
         # This is a DECISION, not an omission. Binding a fresh active row here
-        # under the same freshness bound the full path uses was implemented,
-        # reviewed and then deliberately removed for the reason above, so a
-        # review finding asking for it has been considered and declined rather
-        # than overlooked. The stop is also not a regression: it is the same
+        # was implemented, reviewed and then deliberately removed for the
+        # reason above, so a review finding asking for it has been considered
+        # and declined rather than overlooked. These rows also publish no run
+        # id, so the run-age evidence the full path requires cannot even be
+        # read here. The stop is also not a regression: it is the same
         # behaviour this scan had before the pipeline-custody work, and the
         # crew it declines to attribute still surfaces through its pane and
         # status log.
@@ -565,15 +491,12 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       && nm_run_head_matches_worktree; then
       HAVE_RUN=1
     else
-      # Head equality did not settle it. Every remaining path reads the runs
-      # list - the custody age bound and the coarse scan both - so fetch it
-      # once here, in the parent shell, where the capture survives; a head
-      # match above costs no runs call at all.
-      nm_runs_prefetch
+      # Head equality did not settle it. The exemption reads nothing but this
+      # same captured output - its custody evidence is the gate the daemon
+      # wrote, or the run's own creation time decoded from the run id in it -
+      # so only the coarse scan below ever costs a runs call.
       if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
-        && fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
-             "$(nm_branch_run_started_epoch "$CREW_BRANCH" \
-                  "$(strip_quotes "$(nm_field head)")")"; then
+        && fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; then
         HAVE_RUN=1
       else
         # The active-or-most-recent run is for another branch, or its

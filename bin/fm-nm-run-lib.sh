@@ -140,14 +140,12 @@ fm_nm_branch_sync_state() {  # <toon-output>
 }
 
 # 0 if run status WORD $1 is terminal: the run has finished and released the
-# branch. This is the ONE place that word set is spelled. Both the TOON-level
-# fm_nm_run_is_active below and the runs-list-row check in
-# bin/fm-crew-state.sh's nm_branch_run_started_epoch ask through here, so a CLI
-# that adds a terminal word is handled by editing this list alone - a second
-# copy that missed the addition would treat a finished run as in-flight and
-# hand its timestamp back as live custody evidence. Every other word, known or
-# not, is treated as in-flight, which is the direction that keeps a genuinely
-# live crew attributed.
+# branch. This is the ONE place that word set is spelled. fm_nm_run_is_active
+# below asks through here, so a CLI that adds a terminal word is handled by
+# editing this list alone - a second copy that missed the addition would treat
+# a finished run as in-flight and bind it through the exemption. Every other
+# word, known or not, is treated as in-flight, which is the direction that
+# keeps a genuinely live crew attributed.
 fm_nm_run_word_is_terminal() {  # <status-word>
   case "${1:-}" in completed|failed|cancelled) return 0 ;; esac
   return 1
@@ -203,78 +201,56 @@ fm_nm_custody_max_age_secs() {
   printf '%s' "$v"
 }
 
-# 0 if the `no-mistakes runs` row short sha $2 identifies the SAME run
-# instance as the `axi status` head $1 that is being attributed.
+# Epoch seconds at which the run captured in `axi status` output $1 was
+# created, decoded from that run's OWN id. Prints nothing and returns 1 when
+# the id is absent or is not a ULID.
 #
-# The two are separate CLI calls, so a replacement run can start on the same
-# `fm/<id>` branch between them. Without this check the newest row's fresh
-# timestamp is applied to whatever older run the earlier call captured, and a
-# stranded pipeline-owned run keeps binding as `working` on a successor's
-# freshness - the exact supervision blind spot fm_nm_custody_age_fresh exists
-# to close.
+# This is the only run-age evidence that cannot be attributed to the wrong run.
+# `axi status` publishes no timestamp field, and the one other surface that
+# publishes a run date - `no-mistakes runs` - publishes no run id, so a row read
+# from it can only be matched back to the captured run by branch and head sha.
+# Neither identifies a run instance: a replacement run started on the same
+# `fm/<id>` branch, from the same commit, between the two calls carries the same
+# branch and the same sha, and lending its fresh date to the stranded run the
+# first call captured restores the exact supervision blind spot the custody
+# bound exists to close. A bounded row window cannot even detect that
+# ambiguity, because the older of the two rows can sit past the fetch limit.
+# The id travels in the SAME output being attributed, so it is the captured
+# run's own age by construction, and it costs no second CLI call.
 #
-# Both values are the run record's head sha (verified 2026-09-02 against the
-# installed no-mistakes v1.57.0: `axi status` printed `head: 7163ac0f` while
-# `no-mistakes runs` printed `7163ac0f` for that same run, and a run whose
-# submitted head differed still listed its head sha), so they are comparable
-# directly. Neither surface fixes a width, so the match is a prefix in either
-# direction rather than string equality.
+# no-mistakes run ids are ULIDs: 26 Crockford base32 characters whose first 10
+# are the creation time in milliseconds. Verified 2026-09-02 against the
+# installed no-mistakes v1.57.0 - for run 01M1J2XASY2PXBBB142ZF8A8J8 those
+# characters decode to epoch 1788387175, which is exactly that run's
+# runs.created_at column in ~/.no-mistakes/state.sqlite, the birth time of its
+# ~/.no-mistakes/logs/<id>/ directory, and the `2026-09-02 16:12` local date
+# `no-mistakes runs` printed for that row.
 #
-# A pipeline that advances the run head between the two calls fails to
-# correlate; the age evidence is withheld for that read alone and the caller
-# falls back to the pane and log, which SURFACE the crew. That limit is
-# deliberate and in the safe direction.
-#
-# What this predicate CANNOT do, because the runs list publishes no run id: tell
-# a replacement run started from the identical head apart from the run it
-# replaced. A correlating sha is therefore necessary but not sufficient for
-# identity, and a caller scanning rows must also establish that the sha is
-# UNIQUE among the branch's in-flight rows before treating a row as this run's -
-# bin/fm-crew-state.sh's nm_branch_run_started_epoch owns that scan and yields
-# no evidence when two in-flight rows share the sha.
-#
-# An empty head or an empty row sha never correlates: absence of evidence must
-# not grant the exemption.
-fm_nm_run_sha_correlates() {  # <run-head> <row-sha>
-  local head=${1:-} row_sha=${2:-}
-  [ -n "$head" ] && [ -n "$row_sha" ] || return 1
-  case "$head" in "$row_sha"*) return 0 ;; esac
-  case "$row_sha" in "$head"*) return 0 ;; esac
-  return 1
+# An id that is not a ULID yields NO age, which denies the exemption and lets
+# the caller fall back to the pane and log, which SURFACE the crew - the same
+# conservative direction every other denial here takes. Re-verify the id format
+# against a real run before relaxing that.
+fm_nm_run_started_epoch() {  # <toon-output>
+  fm_nm_ulid_epoch "$(fm_nm_strip_quotes "$(fm_nm_field "$1" id)")"
 }
 
-# Epoch seconds for the "<YYYY-MM-DD> <HH:MM>" date pair that opens $1, the
-# remainder of a `no-mistakes runs` row after its short sha. That list is the
-# only run-age evidence either caller can read: `axi status` carries no
-# timestamp at all. Prints nothing and returns 1 when $1 has no parseable date.
-#
-# The pair is LOCAL wall-clock time, which is why both `date` forms below parse
-# it bare. That is verified, not assumed: checked 2026-09-02 against the
-# installed no-mistakes v1.57.0, whose `no-mistakes runs --limit 3` printed as
-# its newest row
-#   running fm/fm-crewstate-pipeline-exemption-bugs ef09b316 2026-09-02 16:12
-# while the local clock read 2026-09-02 16:49 MDT and the UTC clock read
-# 2026-09-02 22:49 UTC, for a run that had started roughly 37 minutes earlier.
-# A UTC printer would have said 22:12 there, so the row is local.
-#
-# Parsing these rows as UTC would therefore be WRONG on this CLI, and wrong in
-# the direction that silently disables the feature: on a host west of UTC every
-# row would resolve into the future, fm_nm_custody_age_fresh below would reject
-# it, and the exemption would be denied for every pipeline-owned crew on the
-# fleet. Re-verify this against a real row before changing the parse.
-fm_nm_runs_row_epoch() {  # <row-remainder>
-  local rest day clock stamp
-  rest=$(fm_nm_trim "${1:-}")
-  [ -n "$rest" ] || return 1
-  day=${rest%% *}
-  case "$day" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
-  rest=$(fm_nm_trim "${rest#* }")
-  clock=${rest%% *}
-  case "$clock" in [0-9][0-9]:[0-9][0-9]) ;; *) return 1 ;; esac
-  stamp="$day $clock"
-  date -j -f '%Y-%m-%d %H:%M' "$stamp" +%s 2>/dev/null \
-    || date -d "$stamp" +%s 2>/dev/null \
-    || return 1
+# Epoch seconds encoded in ULID $1's 48-bit timestamp prefix. Returns 1 for
+# anything that is not a 26-character Crockford base32 ULID; Crockford excludes
+# I, L, O and U, so an id carrying one of those is not a ULID either. Case is
+# insignificant in Crockford, so a lower-case id decodes the same.
+fm_nm_ulid_epoch() {  # <ulid>
+  local id=${1:-} alphabet='0123456789ABCDEFGHJKMNPQRSTVWXYZ' i=0 c head ms=0
+  [ ${#id} -eq 26 ] || return 1
+  id=$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]')
+  case "$id" in *[!0123456789ABCDEFGHJKMNPQRSTVWXYZ]*) return 1 ;; esac
+  while [ "$i" -lt 10 ]; do
+    c=${id:$i:1}
+    head=${alphabet%%"$c"*}
+    [ ${#head} -lt 32 ] || return 1
+    ms=$((ms * 32 + ${#head}))
+    i=$((i + 1))
+  done
+  printf '%s' $((ms / 1000))
 }
 
 # 0 if epoch $1 is inside the custody window: not older than
@@ -310,12 +286,11 @@ fm_nm_custody_age_fresh() {  # <epoch>
 # only with positive, current custody evidence:
 #   - the run is parked at a gate (fm_nm_run_is_gate_parked): the daemon wrote
 #     that gate, and parked never maps to working; or
-#   - run-started epoch $2 is inside the custody window
-#     (fm_nm_custody_age_fresh). $2 must be THIS run's own start time; a caller
-#     that reads it from a separate run-listing call correlates the row with
-#     this run through fm_nm_run_sha_correlates first, and passes nothing when
-#     that sha does not identify a single in-flight run, or a replacement run on
-#     the same branch lends its freshness to the stranded run captured here.
+#   - the run was created inside the custody window
+#     (fm_nm_custody_age_fresh over fm_nm_run_started_epoch). That age is read
+#     from the captured run's OWN id, in this same output, so no other run's
+#     freshness can ever stand in for it - see fm_nm_run_started_epoch for why
+#     the run-listing surface cannot supply it.
 # With neither, attribution is unknown and the caller falls back to the pane
 # and log, which surface a wedged crew instead of hiding it.
 #
@@ -330,9 +305,9 @@ fm_nm_custody_age_fresh() {  # <epoch>
 # merge is left to the captain, so bounding it would start surfacing crews that
 # are correctly waiting on a captain merge. Closing that gap is a separate
 # product decision about the head rule, not an oversight of this bound.
-fm_nm_run_is_pipeline_owned_active() {  # <toon-output> [<run-started-epoch>]
+fm_nm_run_is_pipeline_owned_active() {  # <toon-output>
   [ "$(fm_nm_branch_sync_state "$1")" = pipeline_owned ] || return 1
   fm_nm_run_is_active "$1" || return 1
   fm_nm_run_is_gate_parked "$1" && return 0
-  fm_nm_custody_age_fresh "${2:-}"
+  fm_nm_custody_age_fresh "$(fm_nm_run_started_epoch "$1")"
 }
