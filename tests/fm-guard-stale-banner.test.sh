@@ -825,6 +825,32 @@ test_away_flag_with_unverifiable_daemon_says_unconfirmed_not_absent() {
   pass "fm-guard stale banner: a live but unverifiable daemon reads as unconfirmed, not as absent"
 }
 
+test_away_flag_with_recycled_pid_reports_proven_absence() {
+  local dir out home pid
+  dir=$(make_guard_case away-flag-recycled-pid)
+  home=$(case_home "$dir")
+  # The daemon died without releasing its lock and the OS recycled its pid to an
+  # unrelated process. The recorded identity is readable and does NOT match the
+  # process now at that pid, which is positive proof the recorded daemon is gone.
+  # A live pid alone must never soften this into "a supervisor is running but
+  # cannot be confirmed" - that would assert a presence on a number collision.
+  sleep 300 &
+  pid=$!
+  : > "$home/state/.afk"
+  touch "$home/state/.last-watcher-beat"
+  record_daemon_lock "$dir" "$pid" "identity of the daemon that actually died"
+  out=$(run_guard_case_autoarm "$dir")
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
+    || fail "a recycled pid must report proven absence, got: $out"
+  assert_not_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
+    "a verified identity mismatch was reported as two-way uncertainty"
+  assert_not_contains "$out" "check the daemon log" \
+    "the captain was sent hunting for an identity warning that cannot exist for a recycled pid"
+  pass "fm-guard stale banner: a recycled pid reports proven absence, not unconfirmed supervision"
+}
+
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale() {
   local dir out home pid
   dir=$(make_guard_case away-flag-live-daemon-stale)
@@ -898,5 +924,6 @@ test_fm_path_age_reads_leading_zero_tokens_as_decimal
 test_away_flag_without_live_daemon_alarms
 test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
 test_away_flag_with_unverifiable_daemon_says_unconfirmed_not_absent
+test_away_flag_with_recycled_pid_reports_proven_absence
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale
 test_away_flag_with_live_daemon_is_healthy

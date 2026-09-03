@@ -1957,13 +1957,41 @@ test_hook_away_mode_blocks_on_pid_reused_daemon() {
   wait "$pid" 2>/dev/null || true
   expect_code 2 "$status" "a live pid whose recorded identity does not match must not satisfy supervision"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
-  # A live pid with a mismatched identity is unverifiable ownership, NOT proven
-  # absence: the banner must not assert that nothing is supervising.
-  assert_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
-    "a live but unverifiable daemon was not reported as unconfirmed"
-  assert_not_contains "$out" "NO SUPERVISOR IS RUNNING" \
-    "the banner asserted proven absence for a live daemon it merely could not verify"
+  # A recycled pid is PROVEN absence, not uncertainty: the recorded identity is
+  # readable and demonstrably does not match the process now at that pid, which is
+  # positive evidence the recorded daemon is gone. Reporting it as "a supervisor is
+  # running but unconfirmed" would soften a real dead-daemon alarm on a number
+  # collision and send the captain hunting for a log warning that cannot exist.
+  assert_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "a recycled pid was reported as a running-but-unconfirmed supervisor"
+  assert_not_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
+    "a verified identity mismatch was treated as two-way uncertainty"
   pass "fm-turnend-guard: away mode blocks on a pid-reused away-mode daemon lock"
+}
+
+# The complement of the pid-reuse case above, and the only genuine two-way
+# uncertainty: bin/fm-supervise-daemon.sh deliberately lets a daemon start and
+# keep supervising when it cannot read its own `ps`, leaving no pid-identity for
+# that daemon's whole life. Nothing here proves absence, so the banner must say
+# supervision is unconfirmed rather than assert nothing is running.
+test_hook_away_mode_unrecorded_identity_reports_unconfirmed() {
+  local dir pid out status
+  dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-unrecorded-identity")
+  sleep 60 &
+  pid=$!
+  mkdir -p "$dir/state/.supervise-daemon.lock"
+  printf '%s\n' "$pid" > "$dir/state/.supervise-daemon.lock/pid"
+  out=$(run_hook "$dir" false); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "an unverifiable daemon must still block the turn end"
+  assert_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
+    "a live daemon with no recorded identity was not reported as unconfirmed"
+  assert_not_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "the banner asserted proven absence for a daemon whose ownership is merely unreadable"
+  assert_contains "$out" "$AWAY_REQUIRED_REASON" \
+    "the unconfirmed block lost its daemon-pointing repair instruction"
+  pass "fm-turnend-guard: a live daemon with no recorded identity reports unconfirmed, not absent"
 }
 
 test_hook_away_mode_blocks_on_stale_beacon() {
@@ -2088,5 +2116,6 @@ test_hook_away_daemon_allows_over_dead_watcher_lock
 test_hook_away_mode_blocks_without_any_supervisor
 test_hook_away_mode_blocks_on_dead_daemon
 test_hook_away_mode_blocks_on_pid_reused_daemon
+test_hook_away_mode_unrecorded_identity_reports_unconfirmed
 test_hook_away_mode_blocks_on_stale_beacon
 test_hook_daemon_lock_is_ignored_without_away_mode

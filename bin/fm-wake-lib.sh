@@ -346,12 +346,30 @@ fm_afk_flag_without_live_daemon() {  # <state>
 # could not be confirmed", because a detector built because away mode asserted
 # supervision it did not have must not itself assert an absence it has not
 # proven. Both stay loud and both keep their repair instruction.
+# Provability is decided by what the evidence establishes, NEVER by pid liveness
+# alone. A live process at the recorded pid is not evidence a daemon is running:
+# a daemon killed without releasing its lock leaves the pid behind and the OS
+# recycles the number, and reading that collision as "a supervisor is running"
+# would soften a genuine dead-daemon alarm on nothing but a number - the same
+# unearned claim, in the opposite direction, that this detector exists to stop.
+# A recorded identity that demonstrably does not match the process now at that
+# pid is POSITIVE proof the recorded daemon is gone, so a recycled pid is proven
+# absence. Only genuine two-way uncertainty is unconfirmed: a live pid with no
+# recorded identity (the deliberate case where the daemon could not read its own
+# `ps` at startup and kept supervising), or one whose current identity cannot be
+# read at all.
 fm_afk_daemon_absence_is_proven() {  # <state>
-  local state=$1 pid
+  local state=$1 lockdir pid recorded current
   [ -e "$state/.afk" ] || return 1
-  pid=$(cat "$state/.supervise-daemon.lock/pid" 2>/dev/null) || return 0
+  lockdir="$state/.supervise-daemon.lock"
+  pid=$(cat "$lockdir/pid" 2>/dev/null) || return 0
   [ -n "$pid" ] || return 0
-  fm_pid_alive "$pid" && return 1
+  fm_pid_alive "$pid" || return 0
+  recorded=$(cat "$lockdir/pid-identity" 2>/dev/null) || return 1
+  [ -n "$recorded" ] || return 1
+  current=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  [ -n "$current" ] || return 1
+  [ "$current" = "$recorded" ] && return 1
   return 0
 }
 

@@ -12,6 +12,23 @@
 # live watcher process means per supervision model. The status fields here retain
 # the beacon-age details used in their messages.
 
+# ONE owner for "how old is this file": fm_path_age in bin/fm-wake-lib.sh, which
+# carries the contract that its result is always either a real non-negative
+# base-10 age or the 999999 sentinel - never empty, negative, or non-numeric.
+# This library is independently sourceable (tests source it alone), so it pulls
+# that owner into scope rather than keeping a second copy of the same arithmetic
+# that would have to be extended in lockstep. Sourced only when absent, so the
+# four scripts that already load bin/fm-wake-lib.sh are unaffected.
+# The one accepted cost, verified rather than assumed: bin/fm-wake-lib.sh runs
+# `mkdir -p "$STATE"` at source time, so a standalone consumer now creates that
+# gitignored directory. Every consumer that loads bin/fm-wake-lib.sh already
+# accepts it; removing the cost means moving that mkdir out of wake-lib's source
+# path, not re-splitting this contract.
+if ! command -v fm_path_age >/dev/null 2>&1; then
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-wake-lib.sh"
+fi
+
 # Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
 fm_sup_stat_mtime() {
   if [ "$(uname)" = Darwin ]; then
@@ -21,40 +38,6 @@ fm_sup_stat_mtime() {
   fi
 }
 
-FM_SUP_UNREADABLE_AGE=999999
-# fm_sup_path_age <path> -> seconds since mtime, or FM_SUP_UNREADABLE_AGE.
-# THE SAME CONTRACT fm_path_age carries in bin/fm-wake-lib.sh, enforced here at
-# this function's single return boundary: what escapes is ALWAYS either a plain
-# non-negative base-10 number of seconds that was really measured, or the
-# sentinel. Never empty, never negative, never a non-numeric token.
-# This file deliberately does not call fm_path_age directly: bin/fm-wake-lib.sh
-# runs `mkdir -p "$STATE"` at source time, and this library is sourced on its own
-# by consumers that must not acquire that side effect. The contract is therefore
-# restated rather than delegated, and it must stay identical in shape to
-# fm_path_age's - extend both together, and do not let either grow a per-input
-# special case the other lacks.
-# It is load-bearing, not cosmetic. FM_SUP_WATCHER_FRESH below has one consumer,
-# the away-mode allow gate in bin/fm-turnend-guard.sh, and a raw subtraction let a
-# beacon stamped in the future read as FRESH (a negative age is `-lt` any grace),
-# which allowed a blind turn end on a beacon whose age was never measurable. A
-# non-numeric mtime was worse: under the `set -u` both guards run, the arithmetic
-# aborted the whole script, and for the Claude Stop hook that exit is not the
-# blocking rc 2, so the turn also ended blind.
-fm_sup_path_age() {
-  local path=$1 m now
-  m=$(fm_sup_stat_mtime "$path") || { echo "$FM_SUP_UNREADABLE_AGE"; return; }
-  case "$m" in
-    ''|*[!0-9]*) echo "$FM_SUP_UNREADABLE_AGE"; return ;;
-  esac
-  now=$(date +%s)
-  case "$now" in
-    ''|*[!0-9]*) echo "$FM_SUP_UNREADABLE_AGE"; return ;;
-  esac
-  case "$(( 10#$now - 10#$m ))" in
-    ''|*[!0-9]*) echo "$FM_SUP_UNREADABLE_AGE" ;;
-    *) echo $(( 10#$now - 10#$m )) ;;
-  esac
-}
 
 # fm_supervision_status <state-dir> [grace-seconds]
 # Populates, for the state dir at $1:
@@ -95,9 +78,13 @@ fm_supervision_status() {
   if [ -e "$beat" ]; then
     # Both the freshness verdict and the banner text come from the one contracted
     # read, so an unmeasurable beacon can neither pass as fresh nor be printed to
-    # the captain as a duration that was actually observed.
-    age=$(fm_sup_path_age "$beat")
-    if [ "$age" = "$FM_SUP_UNREADABLE_AGE" ]; then
+    # the captain as a duration that was actually observed. A beacon stamped in
+    # the future is the case that matters: a raw subtraction made it read as
+    # FRESH, and FM_SUP_WATCHER_FRESH gates the away-mode allow path in
+    # bin/fm-turnend-guard.sh, so a blind turn end was allowed on an age that was
+    # never measurable.
+    age=$(fm_path_age "$beat")
+    if [ "$age" = 999999 ]; then
       # shellcheck disable=SC2034 # Read by callers (fm-guard.sh) after sourcing.
       FM_SUP_BEACON_DESC=unknown
     else
