@@ -241,10 +241,24 @@ else
   _stat_file_mtime() { stat -c %Y "$1" 2>/dev/null; }
 fi
 _now() { date +%s; }
-_file_age() {  # seconds since mtime; very large if missing
-  local f=$1 m
+_file_age() {  # seconds since mtime; very large if missing or unreadable
+  local f=$1 m now
   m=$(_stat_file_mtime "$f") || { echo 999999; return; }
-  echo $(( $(_now) - m ))
+  # Fail closed to "very old" unless the mtime is a plain run of digits. A stat
+  # that exits 0 while printing nothing or a non-numeric token would otherwise
+  # make this print empty (the arithmetic below aborts under `set -u`), and the
+  # housekeeping gate that reads this age would then error with
+  # "[: : integer expression expected" and silently skip that tick - the tick
+  # that drives batch flushes, stale rechecks, and the catch-all scan. 999999
+  # makes the gate RUN instead of skip, which is the safe direction.
+  case "$m" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  now=$(_now)
+  case "$now" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  echo $(( now - m ))
 }
 
 _hash_text() {

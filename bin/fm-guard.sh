@@ -197,8 +197,14 @@ if [ "$watcher_healthy" = false ]; then
     rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     {
       printf '●%s\n' "$rule"
-      printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
-      if [ "$watcher_down_reason" = no-watcher ]; then
+      if [ "$watcher_down_reason" = no-afk-daemon ]; then
+        printf '●  AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING\n'
+      else
+        printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
+      fi
+      if [ "$watcher_down_reason" = no-afk-daemon ]; then
+        watcher_cause=$(printf 'away mode is flagged but no live away-mode supervisor owns this home (last beat: %s)' "$beacon_desc")
+      elif [ "$watcher_down_reason" = no-watcher ]; then
         watcher_cause=$(printf 'no live watcher process holds this home lock (last beat: %s)' "$beacon_desc")
       else
         watcher_cause=$(printf 'no watcher has a fresh beacon (last beat: %s, grace %ss)' "$beacon_desc" "$GRACE")

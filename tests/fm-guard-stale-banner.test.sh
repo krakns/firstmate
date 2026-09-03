@@ -41,6 +41,21 @@ record_live_watcher() {
   printf '%s\n' "$identity" > "$home/state/.watch.lock/pid-identity"
 }
 
+# Record an away-mode daemon holding this home, the way the daemon does at
+# startup: its singleton lock names the daemon pid plus the process identity it
+# computed for itself. With no identity arg a live identity is computed for the
+# given pid; passing one lets a test model a dead or pid-reused daemon.
+record_daemon_lock() {  # <dir> <pid> [identity]
+  local dir=$1 pid=$2 identity=${3:-} home
+  home=$(case_home "$dir")
+  if [ -z "$identity" ]; then
+    identity=$(FM_STATE_OVERRIDE="$home/state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$pid") || return 1
+  fi
+  mkdir -p "$home/state/.supervise-daemon.lock"
+  printf '%s\n' "$pid" > "$home/state/.supervise-daemon.lock/pid"
+  printf '%s\n' "$identity" > "$home/state/.supervise-daemon.lock/pid-identity"
+}
+
 # These cases exercise the persistent-watcher model (a live pid is the real
 # liveness signal), so pin the model rather than letting the host test runner's
 # ambient harness ancestry pick it.
@@ -680,6 +695,45 @@ test_pi_harness_routes_itself_to_the_extension_model() {
   pass "fm-guard stale banner: Pi and pi-signed primaries route themselves to the extension model"
 }
 
+test_away_flag_without_live_daemon_alarms() {
+  local dir out home
+  dir=$(make_guard_case away-flag-no-daemon)
+  home=$(case_home "$dir")
+  # Away mode is FLAGGED, the beacon is still fresh (the daemon's watcher child
+  # touched it just before the daemon was reaped), but the daemon lock names a
+  # dead pid: away mode is claiming supervision nothing is providing. This is the
+  # fresh-beacon blind window - a beacon-only check would call it healthy.
+  : > "$home/state/.afk"
+  touch "$home/state/.last-watcher-beat"
+  record_daemon_lock "$dir" 999999 "dead daemon identity"
+  out=$(run_guard_case_autoarm "$dir")
+  [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
+    || fail "a fresh beacon with a dead away-mode daemon must raise the away-mode alarm, got: $out"
+  assert_contains "$out" "away mode is flagged but no live away-mode supervisor owns this home" \
+    "away-mode banner must name the flag-without-daemon cause"
+  pass "fm-guard stale banner: away flag with a dead daemon alarms even while the beacon is fresh"
+}
+
+test_away_flag_with_live_daemon_is_healthy() {
+  local dir out home pid
+  dir=$(make_guard_case away-flag-live-daemon)
+  home=$(case_home "$dir")
+  # Healthy away mode: flag set, beacon fresh, and a live identity-matched daemon
+  # owns the home. The daemon holds its lock across every watcher-restart cycle,
+  # so this must stay silent and never false-alarm on a hand-off.
+  sleep 300 &
+  pid=$!
+  : > "$home/state/.afk"
+  touch "$home/state/.last-watcher-beat"
+  record_daemon_lock "$dir" "$pid" || { kill "$pid" 2>/dev/null; fail "could not record a live away-mode daemon lock"; }
+  out=$(run_guard_case_autoarm "$dir")
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ -z "$out" ] \
+    || fail "away mode with a live identity-matched daemon must stay silent, got: $out"
+  pass "fm-guard stale banner: away flag with a live daemon is healthy"
+}
+
 test_first_stale_call_prints_full_banner
 test_repeated_same_episode_prints_reminder_only
 test_pi_harness_routes_itself_to_the_extension_model
@@ -707,3 +761,5 @@ test_read_only_before_writable_does_not_consume_full_banner
 test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
+test_away_flag_without_live_daemon_alarms
+test_away_flag_with_live_daemon_is_healthy

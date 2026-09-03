@@ -272,6 +272,22 @@ fm_afk_daemon_owns_supervision() {
   [ "$current" = "$recorded" ]
 }
 
+# fm_afk_flag_without_live_daemon <state>
+# True when away mode is FLAGGED but no live identity-matched daemon owns it:
+# state/.afk exists yet fm_afk_daemon_owns_supervision is false. This is the
+# dangerous half-state the away-mode contract must never present silently - the
+# flag claims supervision is owned while nothing owns it. It happens whenever the
+# daemon is reaped out from under the flag: the host harness reaps the tracked
+# background job hosting the daemon (a SIGTERM the daemon's own cleanup handles
+# by flushing and exiting WITHOUT clearing the flag, since only the launcher's
+# stop path clears it), a crash, or a lost pid. Callers surface it loudly.
+fm_afk_flag_without_live_daemon() {  # <state>
+  local state=$1
+  [ -e "$state/.afk" ] || return 1
+  fm_afk_daemon_owns_supervision "$state" && return 1
+  return 0
+}
+
 # fm_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
 # Model-aware "is supervision healthy right now" verdict for the pull warning
 # guard (bin/fm-guard.sh), NOT the arm layer or the turn-end guard. Sets:
@@ -310,6 +326,28 @@ fm_watcher_supervision_verdict() {
     ''|*[!0-9]*) ;;
     *) [ "$age" -lt "$grace" ] && fresh=true ;;
   esac
+  # Away mode changes who the supervisor is: the away-mode daemon owns the
+  # watcher and runs it one-shot, so a fresh beacon can linger for up to grace
+  # seconds after the daemon itself is reaped (its watcher child touched the
+  # beacon just before dying with it). A fresh beacon alone therefore cannot
+  # prove supervision here - require a live identity-matched daemon that still
+  # owns this home, the same test the turn-end guard applies
+  # (fm_afk_daemon_owns_supervision). This turns "away flag set but no live
+  # daemon" into an immediate, loud no-afk-daemon verdict instead of a
+  # fresh-beacon blind window that only trips once the beacon decays.
+  if [ -e "$state/.afk" ]; then
+    if [ "$fresh" != true ]; then
+      # shellcheck disable=SC2034 # Read by callers after the function returns.
+      FM_WATCHER_VERDICT_REASON=stale-beacon
+    elif fm_afk_daemon_owns_supervision "$state"; then
+      # shellcheck disable=SC2034 # Read by callers after the function returns.
+      FM_WATCHER_VERDICT_OK=true
+    else
+      # shellcheck disable=SC2034 # Read by callers after the function returns.
+      FM_WATCHER_VERDICT_REASON=no-afk-daemon
+    fi
+    return 0
+  fi
   model=$(fm_supervision_model)
   if [ "$model" = autoarm ]; then
     [ "$fresh" = true ] && FM_WATCHER_VERDICT_OK=true

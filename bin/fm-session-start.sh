@@ -854,7 +854,17 @@ done
 
 subsection "AFK"
 if [ -e "$STATE/.afk" ]; then
-  printf 'present - away-mode supervision is active; the daemon owns the watcher.\n'
+  if fm_afk_flag_without_live_daemon "$STATE"; then
+    # The flag is set but no live away-mode supervisor owns it - away mode is
+    # claiming supervision it is not providing. Never report this as active:
+    # say the danger plainly so a returning session repairs it. The read-only
+    # guard above raises the bordered alarm when work is in flight; this line
+    # catches the idle-fleet case the guard skips.
+    printf 'present, BUT NO SUPERVISOR IS RUNNING - away mode is flagged with no live daemon, so nothing is supervising.\n'
+    printf 'Load /afk and relaunch the daemon, or exit away mode properly; do not trust away-mode notifications until it is running.\n'
+  else
+    printf 'present - away-mode supervision is active; the daemon owns the watcher.\n'
+  fi
 else
   printf 'absent\n'
 fi

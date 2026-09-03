@@ -2615,6 +2615,33 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
   pass "inject_msg: unrecognized composer states defer by default"
 }
 
+test_file_age_fails_closed_on_unreadable_mtime() {
+  # The 2026-09-02 incident: the housekeeping gate at fm-supervise-daemon.sh's
+  # main loop read an empty _file_age and errored with
+  # "[: : integer expression expected", silently skipping that tick's batch
+  # flushes, stale rechecks, and catch-all scan. _file_age must fail closed to
+  # 999999 (never empty) whenever _stat_file_mtime yields nothing or a
+  # non-numeric token, so the gate RUNS instead of erroring.
+  local age tmp
+  tmp=$(mktemp "$TMP_ROOT/file-age.XXXXXX"); : > "$tmp"
+  age=$(_file_age "$tmp")
+  case "$age" in ''|*[!0-9]*) fail "a real file's age must be a non-negative integer, got: [$age]" ;; esac
+  [ "$(_file_age "$TMP_ROOT/definitely-absent-$$")" = 999999 ] \
+    || fail "a missing file must read as 999999"
+  age=$( _stat_file_mtime() { return 0; }; _file_age "$tmp" )
+  [ "$age" = 999999 ] || fail "an empty mtime read (exit 0, no output) must fail closed to 999999, got: [$age]"
+  age=$( _stat_file_mtime() { printf 'abc'; }; _file_age "$tmp" )
+  [ "$age" = 999999 ] || fail "a non-numeric mtime read must fail closed to 999999, got: [$age]"
+  age=$( _stat_file_mtime() { printf '12x'; }; _file_age "$tmp" )
+  [ "$age" = 999999 ] || fail "a part-numeric mtime read must fail closed to 999999, got: [$age]"
+  # The fail-closed value must satisfy the housekeeping gate as a plain integer.
+  age=$( _stat_file_mtime() { return 0; }; _file_age "$tmp" )
+  [ "$age" -ge 15 ] 2>/dev/null \
+    || fail "the fail-closed age must be an integer the housekeeping gate can compare, got: [$age]"
+  rm -f "$tmp"
+  pass "_file_age fails closed to 999999 on an empty or non-numeric mtime read"
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -2738,3 +2765,4 @@ test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
+test_file_age_fails_closed_on_unreadable_mtime
