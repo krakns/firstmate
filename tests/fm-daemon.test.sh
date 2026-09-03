@@ -2697,10 +2697,17 @@ _run_housekeeping_over_marker() {  # <state> <fakebin> <window> -> status
 }
 
 test_housekeeping_survives_a_truncated_marker() {
-  local dir state fakebin task win key marker paused status content
-  for content in '' 'abc' '17x'; do
-    dir=$(make_supercase "housekeeping-truncated-marker-${#content}")
+  local dir state fakebin task win key marker paused status label content spec
+  # Each label names its own case directory. make_supercase is a deterministic
+  # mkdir -p under TMP_ROOT rather than a mktemp, so two iterations sharing a
+  # name would share one state directory and the later one would start on the
+  # earlier one's leftover markers and already-consumed status line.
+  for spec in 'empty:' 'alpha:abc' 'partial:17x'; do
+    label=${spec%%:*}; content=${spec#*:}
+    dir=$(make_supercase "housekeeping-truncated-marker-$label")
     state="$dir/state"; fakebin="$dir/fakebin"
+    [ ! -e "$state/.subsuper-last-scan" ] \
+      || fail "case $label did not start from a clean state directory"
     task="truncated-marker-w1"; win="sess:fm-$task"
     key=$(printf '%s' "$task" | tr ':/.' '___')
     marker="$state/.subsuper-stale-$key"
@@ -2714,9 +2721,9 @@ test_housekeeping_survives_a_truncated_marker() {
     status=0
     _run_housekeeping_over_marker "$state" "$fakebin" "$win" || status=$?
     [ "$status" -eq 0 ] \
-      || fail "housekeeping aborted on a stale marker holding [$content], status $status"
+      || fail "housekeeping aborted on a $label stale marker holding [$content], status $status"
     [ -e "$state/.subsuper-last-scan" ] \
-      || fail "the heartbeat scan never ran, so housekeeping died before it on a stale marker holding [$content]"
+      || fail "the heartbeat scan never ran, so housekeeping died before it on a $label stale marker holding [$content]"
 
     # The same hazard on the pause marker, which section (2b) reads after (2).
     rm -f "$marker" "$state/.subsuper-last-scan"
@@ -2725,9 +2732,9 @@ test_housekeeping_survives_a_truncated_marker() {
     status=0
     _run_housekeeping_over_marker "$state" "$fakebin" "$win" || status=$?
     [ "$status" -eq 0 ] \
-      || fail "housekeeping aborted on a pause marker holding [$content], status $status"
+      || fail "housekeeping aborted on a $label pause marker holding [$content], status $status"
     [ -e "$state/.subsuper-last-scan" ] \
-      || fail "the heartbeat scan never ran, so housekeeping died before it on a pause marker holding [$content]"
+      || fail "the heartbeat scan never ran, so housekeeping died before it on a $label pause marker holding [$content]"
   done
   # A truncated marker must age as very old, so the guarded work RUNS: the stale
   # window matures into its escalation instead of being skipped forever.
@@ -2743,6 +2750,49 @@ test_housekeeping_survives_a_truncated_marker() {
     || fail "housekeeping aborted while maturing a truncated stale marker"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 \
     || fail "a truncated stale marker did not fail closed to very old, so the wedge never escalated"
+  # The escalation still fires, but it must not report the fail-closed sentinel to
+  # the captain as an observed duration: nothing measured 999999 seconds here.
+  ! grep -F "999999" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the escalation reported the fail-closed sentinel as a real elapsed time: $(cat "$state/.subsuper-escalations")"
+  grep -F "timestamp could not be read" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the escalation did not say the elapsed time was unreadable: $(cat "$state/.subsuper-escalations")"
+
+  # Section (2b)'s pause re-surface interpolates the same age, so it must not
+  # print the sentinel either.
+  dir=$(make_supercase housekeeping-truncated-pause-marker-escalates)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task="truncated-marker-w3"; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: dispatching the long audit\npaused: the audit engine is running to completion\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$dir/pane.txt"
+  : > "$state/.subsuper-paused-$key"
+  _run_housekeeping_over_marker "$state" "$fakebin" "$win" \
+    || fail "housekeeping aborted while maturing a truncated pause marker"
+  grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a truncated pause marker did not fail closed to very old, so the recheck never escalated"
+  ! grep -F "999999" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the pause recheck reported the fail-closed sentinel as a real elapsed time: $(cat "$state/.subsuper-escalations")"
+  grep -F "timestamp could not be read" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the pause recheck did not say the elapsed time was unreadable: $(cat "$state/.subsuper-escalations")"
+
+  # A genuinely measured age must still read as a plain duration, so the
+  # unreadable wording cannot quietly replace real measurements.
+  dir=$(make_supercase housekeeping-measured-marker-escalates)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task="measured-marker-w4"; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: still going\n' > "$state/$task.status"
+  printf 'idle prompt $\n' > "$dir/pane.txt"
+  echo $(( $(date +%s) - 900 )) > "$state/.subsuper-stale-$key"
+  _run_housekeeping_over_marker "$state" "$fakebin" "$win" \
+    || fail "housekeeping aborted on a readable stale marker"
+  grep -E "stale persisted 9[0-9][0-9]s" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a readable stale marker did not report its measured age: $(cat "$state/.subsuper-escalations")"
+  ! grep -F "timestamp could not be read" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a readable stale marker was reported as unreadable: $(cat "$state/.subsuper-escalations")"
   pass "housekeeping completes and fails closed over an empty or non-numeric stale/pause marker"
 }
 

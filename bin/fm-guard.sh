@@ -184,6 +184,8 @@ if [ "$watcher_healthy" = false ]; then
   if [ "$print_full_banner" -eq 1 ]; then
     afk=0
     [ -e "$STATE/.afk" ] && afk=1
+    afk_daemon_down=0
+    [ "$watcher_down_reason" = no-afk-daemon ] && afk_daemon_down=1
     queue_arg=0
     "$queue_pending" && queue_arg=1
     x_mode=0
@@ -191,6 +193,7 @@ if [ "$watcher_healthy" = false ]; then
     fix=$("$SCRIPT_DIR/fm-supervision-instructions.sh" \
       --read-only "$READ_ONLY" \
       --afk "$afk" \
+      --afk-daemon-down "$afk_daemon_down" \
       --x-mode "$x_mode" \
       --queue-pending "$queue_arg" \
       --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')

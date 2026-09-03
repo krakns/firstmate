@@ -711,6 +711,11 @@ test_away_flag_without_live_daemon_alarms() {
     || fail "a fresh beacon with a dead away-mode daemon must raise the away-mode alarm, got: $out"
   assert_contains "$out" "away mode is flagged but no live away-mode supervisor owns this home" \
     "away-mode banner must name the flag-without-daemon cause"
+  # The banner's own repair line must not contradict the header it sits under.
+  assert_not_contains "$out" "Away mode owns watcher supervision" \
+    "the banner's repair line still claimed away mode owns supervision under a no-supervisor header"
+  assert_contains "$out" "ensure the daemon is running" \
+    "the banner's repair line lost the instruction to get the daemon running"
   pass "fm-guard stale banner: away flag with a dead daemon alarms even while the beacon is fresh"
 }
 

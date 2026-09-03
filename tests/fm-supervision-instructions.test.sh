@@ -75,6 +75,34 @@ test_afk_daemon_down_stanza() {
   pass "renderer reports the away-mode half-state only when its caller supplies the signal"
 }
 
+test_afk_repair_line_tracks_daemon_ownership() {
+  local home out
+  home="$TMP_ROOT/afk-repair-home"
+  mkdir -p "$home/state" "$home/config"
+  # The repair line is what the guard banner prints under its own header, so in
+  # the reaped half-state it cannot keep asserting away mode owns supervision -
+  # that is the exact false claim the header three lines above just denied.
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --afk 1 --repair-line)
+  assert_contains "$out" "Away mode owns watcher supervision" \
+    "the live-daemon repair line changed"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --afk 1 --afk-daemon-down 0 --repair-line)
+  assert_contains "$out" "Away mode owns watcher supervision" \
+    "--afk-daemon-down 0 changed the live-daemon repair line"
+
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --afk 1 --afk-daemon-down 1 --repair-line)
+  assert_not_contains "$out" "Away mode owns watcher supervision" \
+    "the repair line still claimed away mode owns supervision with no live daemon"
+  assert_contains "$out" "no live daemon owns watcher supervision" \
+    "the repair line did not name the flag-without-daemon half-state"
+  assert_contains "$out" "ensure the daemon is running" \
+    "the repair line lost its action clause in the half-state"
+
+  # Read-only still outranks away mode: that session must not repair at all.
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --read-only 1 --afk 1 --afk-daemon-down 1 --repair-line)
+  assert_contains "$out" "read-only session" "read-only lost precedence over the away-mode repair line"
+  pass "the away-mode repair line stops claiming ownership when no live daemon owns supervision"
+}
+
 test_repair_lines() {
   local home out
   home="$TMP_ROOT/repair-home"
@@ -215,6 +243,7 @@ test_selected_harness_block_only
 test_unknown_fallback
 test_conditional_stanzas
 test_afk_daemon_down_stanza
+test_afk_repair_line_tracks_daemon_ownership
 test_repair_lines
 test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol

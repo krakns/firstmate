@@ -131,7 +131,11 @@ repair_line() {
     return 0
   fi
   if [ "$AFK" -eq 1 ]; then
-    printf '%s\n' 'Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.'
+    if [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
+      printf '%s\n' 'Away mode is flagged but no live daemon owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.'
+    else
+      printf '%s\n' 'Away mode owns watcher supervision; load /afk and ensure the daemon is running instead of starting normal supervision directly.'
+    fi
     return 0
   fi
 
