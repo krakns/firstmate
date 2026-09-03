@@ -382,9 +382,10 @@ nm_runs_list() {
 # timestamp). Only a NOT-TERMINAL newest row yields evidence - if this branch's
 # newest run already reached a terminal word, the active run `axi status`
 # reports has been superseded and must not borrow the newer row's freshness.
-# Terminal is the complement of active, spelled the same way fm_nm_run_is_active
-# spells it (that function owns the word), so any other in-flight word the CLI
-# prints still yields the age evidence a live run is entitled to.
+# Terminal is the complement of active, asked through
+# fm_nm_run_word_is_terminal so the word set is spelled once in
+# bin/fm-nm-run-lib.sh rather than copied here, so any other in-flight word the
+# CLI prints still yields the age evidence a live run is entitled to.
 # Empty when the branch has no listed row, its newest row is terminal, or that
 # row has no parseable date; fm_nm_custody_age_fresh treats all three as not
 # fresh.
@@ -399,7 +400,7 @@ nm_branch_run_started_epoch() {  # <branch>
     rest=$(trim "${row#* }")
     br=${rest%% *}
     [ "$br" = "$branch" ] || continue
-    case "$st" in completed|failed|cancelled) return 0 ;; esac
+    if fm_nm_run_word_is_terminal "$st"; then return 0; fi
     rest=$(trim "${rest#* }")
     fm_nm_runs_row_epoch "$(trim "${rest#* }")" || true
     return 0
@@ -467,6 +468,15 @@ nm_runs_status_for_branch() {  # <branch>
         # every no-verb signal and turn-end wake for the whole custody window,
         # which is the precise harm the rest of this attribution exists to
         # remove, so the safe stop wins over the attribution.
+        #
+        # This is a DECISION, not an omission. Binding a fresh active row here
+        # under the same freshness bound the full path uses was implemented,
+        # reviewed and then deliberately removed for the reason above, so a
+        # review finding asking for it has been considered and declined rather
+        # than overlooked. The stop is also not a regression: it is the same
+        # behaviour this scan had before the pipeline-custody work, and the
+        # crew it declines to attribute still surfaces through its pane and
+        # status log.
         fm_nm_head_resolvable "$WT" "$sha" || return 0
         continue
       fi

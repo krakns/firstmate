@@ -1658,7 +1658,7 @@ test_non_pipeline_owned_unresolvable_head_not_attributed() {
   fm_write_meta "$d/state/feat-f10d.meta" "window=fm:fm-feat-f10d" "worktree=$d/wt" "kind=ship" "harness=claude"
   printf 'working: implementing\n' > "$d/state/feat-f10d.status"
   FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10d f0f0f0f0 synced)"
-  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10d f0f0f0f0  $(runs_date_ago 600)"
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10d
   local out; out=$(run_crew_state "$d" feat-f10d)
@@ -1679,13 +1679,20 @@ test_pipeline_owned_terminal_run_not_exempt() {
   printf 'working: stage 2 in progress\n' > "$d/state/feat-f10e.status"
   FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10e f0f0f0f0)
 outcome: failed"
-  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_RUNS_LIST="  running    fm/feat-f10e f0f0f0f0  $(runs_date_ago 600)"
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" feat-f10e
   local out; out=$(run_crew_state "$d" feat-f10e)
-  assert_not_contains "$out" "source: run-step" "a terminal run must not bind through the exemption"
+  assert_not_contains "$out" "source: run-step" "a terminal outcome must not bind through the exemption"
   assert_contains "$out" "source: status-log" "falls back to the status log for a terminal unresolvable head"
-  pass "the exemption never applies to a terminal run"
+
+  # The other way a run reads terminal: a terminal status WORD with no outcome
+  # written yet. Both arms must deny, or a finished run keeps the branch by name.
+  FM_FAKE_AXI_STATUS="$(run_running_pipeline_owned fm/feat-f10e f0f0f0f0 | sed 's/^  status: running$/  status: cancelled/')"
+  out=$(run_crew_state "$d" feat-f10e)
+  assert_not_contains "$out" "source: run-step" "a terminal status word must not bind through the exemption"
+  assert_contains "$out" "source: status-log" "falls back to the status log for a cancelled unresolvable head"
+  pass "the exemption never applies to a terminal run, by outcome or by status word"
 }
 
 test_missing_run_head_falls_back_to_current_state() {

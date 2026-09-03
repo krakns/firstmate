@@ -250,6 +250,23 @@ outcome: failed"
   pass "the exemption never applies to a terminal run"
 }
 
+# The terminal word set has one owner, because two copies that drift let a
+# finished run be read as in-flight and hand its timestamp back as live custody
+# evidence. bin/fm-crew-state.sh's runs-row age lookup asks through this same
+# predicate.
+test_terminal_word_set_is_exactly_the_three_finished_words() {
+  local w
+  for w in completed failed cancelled; do
+    fm_nm_run_word_is_terminal "$w" || fail "'$w' was not recognized as terminal"
+  done
+  for w in running fixing ci review awaiting_approval '' 'not-a-status'; do
+    if fm_nm_run_word_is_terminal "$w"; then
+      fail "'$w' was treated as terminal, so a live run would lose its age evidence"
+    fi
+  done
+  pass "the terminal word set covers the finished words and nothing else"
+}
+
 test_non_custody_state_is_never_exempt() {
   if fm_nm_run_is_pipeline_owned_active "$(toon_direct_child_first synced)" "$((NOW - 600))"; then
     fail "a synced branch bound through the exemption"
@@ -342,6 +359,7 @@ test_no_age_evidence_denies_the_exemption
 test_future_dated_run_denies_the_exemption
 test_absent_status_is_not_a_live_run
 test_terminal_run_is_never_exempt
+test_terminal_word_set_is_exactly_the_three_finished_words
 test_non_custody_state_is_never_exempt
 test_gate_parked_run_binds_regardless_of_age
 test_running_run_is_not_gate_parked

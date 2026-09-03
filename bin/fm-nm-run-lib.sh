@@ -139,6 +139,20 @@ fm_nm_branch_sync_state() {  # <toon-output>
   fm_nm_strip_quotes "$(fm_nm_block_child_scalar "$1" branch_sync state)"
 }
 
+# 0 if run status WORD $1 is terminal: the run has finished and released the
+# branch. This is the ONE place that word set is spelled. Both the TOON-level
+# fm_nm_run_is_active below and the runs-list-row check in
+# bin/fm-crew-state.sh's nm_branch_run_started_epoch ask through here, so a CLI
+# that adds a terminal word is handled by editing this list alone - a second
+# copy that missed the addition would treat a finished run as in-flight and
+# hand its timestamp back as live custody evidence. Every other word, known or
+# not, is treated as in-flight, which is the direction that keeps a genuinely
+# live crew attributed.
+fm_nm_run_word_is_terminal() {  # <status-word>
+  case "${1:-}" in completed|failed|cancelled) return 0 ;; esac
+  return 1
+}
+
 # 0 if the run in captured `axi status` TOON $1 is still in flight: a POSITIVE
 # non-terminal status and no terminal outcome. An ABSENT status is not evidence
 # of a live run and returns 1 - the exemption below trades away the head rule,
@@ -149,7 +163,7 @@ fm_nm_run_is_active() {  # <toon-output>
   outcome=$(fm_nm_strip_quotes "$(fm_nm_field "$1" outcome)")
   [ -z "$outcome" ] || return 1
   [ -n "$status" ] || return 1
-  case "$status" in completed|failed|cancelled) return 1 ;; esac
+  ! fm_nm_run_word_is_terminal "$status"
 }
 
 # 0 if the run in $1 is parked at a gate awaiting the agent. The daemon wrote
