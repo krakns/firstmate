@@ -291,10 +291,13 @@ fm_afk_daemon_owns_supervision() {
 # state/.afk exists yet fm_afk_daemon_owns_supervision is false. This is the
 # dangerous half-state the away-mode contract must never present silently - the
 # flag claims supervision is owned while nothing owns it. It happens whenever the
-# daemon is reaped out from under the flag: the host harness reaps the tracked
-# background job hosting the daemon (a SIGTERM the daemon's own cleanup handles
+# daemon goes away without the flag going with it: the host harness reaping the
+# tracked background job that hosts the daemon (a SIGTERM its own cleanup handles
 # by flushing and exiting WITHOUT clearing the flag, since only the launcher's
-# stop path clears it), a crash, or a lost pid. Callers surface it loudly.
+# stop path clears it), a crash, or a lost pid. The observed reap, the two signals
+# that identify it, the disconfirmed system-sleep hypothesis, and what is
+# deliberately left unestablished are recorded in
+# docs/watcher-continuity.md#away-mode-daemon-reap. Callers surface it loudly.
 fm_afk_flag_without_live_daemon() {  # <state>
   local state=$1
   [ -e "$state/.afk" ] || return 1

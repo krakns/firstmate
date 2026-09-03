@@ -21,6 +21,28 @@ Only an exhausted failure with no verified watcher commits one last-resort notic
 The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
 
+## Away-mode daemon reap
+
+Away mode moves watcher ownership to `bin/fm-supervise-daemon.sh`, and on a Claude primary that daemon runs as a harness-tracked background job.
+The host harness can reap that job with `SIGTERM`, which was observed three times on 2026-09-02.
+The daemon handles the signal exactly as designed: its `cleanup` trap flushes buffered escalations, kills the watcher child, releases the lock, removes the pidfile, logs `daemon shutting down`, and exits 0.
+It deliberately does not clear `state/.afk`, because clearing the flag last belongs to `bin/fm-afk-launch.sh`'s stop path, and a bare harness `SIGTERM` is not that path.
+What is left is the half-state this contract has to defend against: the flag set, no daemon, no watcher, and no error at all, which is why the first two stops were entirely silent.
+
+Two signals identify a reap.
+The harness's captured job output ends with `[killed]` followed by `Terminated: 15`, which is the shell reporting `SIGTERM`.
+The daemon log carries `daemon shutting down` at each corresponding time, which is the cleanup trap above rather than an ordinary exit.
+Sending `SIGTERM` to a running daemon drives the same cleanup path and leaves the identical half-state, so the mechanism is reproducible on demand.
+That reproduces the mechanism only, not the internal harness condition that caused the reap.
+
+System sleep was tested as an alternative explanation and disconfirmed against `pmset -g log`.
+The one daytime system sleep on 2026-09-02, a 17:23 to 17:56 clamshell, has no reap anywhere near it, and the daemon that was alive across that sleep survived it and kept logging real work mid-sleep.
+
+What is deliberately not established is the internal harness condition that triggers the reap, whether a lifetime cap, idle reaping, resource pressure, or a session compaction boundary.
+That lives in harness internals outside this repository, and it is recorded as unknown rather than guessed.
+It does not change the conclusion: the host can reap the job whatever its reason, so the daemon cannot protect itself and the contract must detect the half-state rather than trust the flag.
+That detection is `fm_afk_flag_without_live_daemon` in `bin/fm-wake-lib.sh`, which every supervision-health surface now consults before reporting away-mode supervision as active.
+
 ## Actionable wake ordering
 
 After an actionable Pi or OpenCode child close, the adapter starts and verifies one singleton successor before it delivers the original wake.

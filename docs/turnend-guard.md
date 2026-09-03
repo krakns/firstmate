@@ -55,6 +55,7 @@ That is the same identity discipline the watcher lock uses, so a recycled pid, a
 A daemon that cannot record its own identity at startup logs a warning and keeps running, because a supervisor must not refuse to run over an unreadable `ps`; that warning is what names the cause when the guard then keeps blocking away-mode turn boundaries for the rest of that daemon's life.
 The proof covers ownership only, never freshness: the fresh-beacon half of the predicate is unchanged, so a daemon that stops restarting its watcher still blocks once the beacon passes grace, and a home with no daemon and no watcher blocks exactly as it did before.
 With away mode off the daemon lock proves nothing and the strict watcher predicate is unchanged.
+[`watcher-continuity.md`](watcher-continuity.md#away-mode-daemon-reap) records the evidence that the host can reap the daemon out from under a still-set flag, which is why no surface treats the flag alone as proof of supervision.
 
 `FM_STATE_OVERRIDE` wins over `FM_HOME/state`, and `FM_HOME` wins over repository-root `state/`.
 `FM_GUARD_GRACE` controls beacon freshness and defaults to 300 seconds.
