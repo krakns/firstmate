@@ -2446,7 +2446,19 @@ EOF
 
   assert_contains "$out" "NO SUPERVISOR IS RUNNING" "AFK digest did not surface the flag-without-daemon danger"
   assert_not_contains "$out" "away-mode supervision is active" "AFK digest wrongly reported supervision active with no live daemon"
-  pass "AFK digest loudly flags away mode set with no live daemon"
+  # Every later surface must tell the same story. A loud alarm mid-digest followed
+  # by a calm "away mode is active, keep supervision paused" at the close is the
+  # mixed message this half-state cannot afford: the closing next step is the most
+  # steering line in the digest.
+  assert_not_contains "$out" "Away mode is active" \
+    "the closing next step still claimed away mode is active with no live daemon"
+  assert_not_contains "$out" "- Away mode: active" \
+    "the supervision block still claimed away mode is active with no live daemon"
+  assert_contains "$out" "- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING" \
+    "the supervision block did not name the flag-without-daemon half-state"
+  assert_contains "$out" "Away mode is flagged, BUT NO SUPERVISOR IS RUNNING" \
+    "the closing next step did not name the flag-without-daemon half-state"
+  pass "every away-mode surface reports no supervisor when the flag has no live daemon"
 }
 
 test_supervision_block_exactly_one_and_pi_diagnostic() {

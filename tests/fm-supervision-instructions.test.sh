@@ -42,6 +42,39 @@ test_conditional_stanzas() {
   pass "renderer includes read-only, afk, and effective x-mode current-state stanzas"
 }
 
+test_afk_daemon_down_stanza() {
+  local home config out
+  home="$TMP_ROOT/afk-daemon-down-home"
+  config="$TMP_ROOT/afk-daemon-down-config"
+  mkdir -p "$home/state" "$home/config" "$config"
+  # The renderer is a parameter-driven view, never a state reader. Its caller
+  # answers "is a live daemon actually supervising"; absent that answer the
+  # renderer must keep its previous wording, so a standalone or older caller is
+  # never made to invent an alarm it cannot substantiate.
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1)
+  assert_contains "$out" "- Away mode: active" "omitting --afk-daemon-down changed the default away-mode wording"
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 0)
+  assert_contains "$out" "- Away mode: active" "--afk-daemon-down 0 changed the live-daemon wording"
+
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 1)
+  assert_contains "$out" "- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING" \
+    "the renderer did not name the flag-without-daemon half-state"
+  assert_not_contains "$out" "- Away mode: active" \
+    "the renderer still called away mode active with no live daemon"
+  assert_not_contains "$out" "keep normal harness supervision paused" \
+    "the renderer still told the reader to keep supervision paused with no live daemon"
+
+  # The signal is only meaningful alongside --afk 1: away mode being off is not an
+  # alarm, whatever a caller passes here.
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 0 --afk-daemon-down 1)
+  assert_contains "$out" "- Away mode: inactive." "--afk-daemon-down leaked into the away-mode-off stanza"
+
+  if FM_HOME="$home" "$RENDER" --harness codex --afk-daemon-down >/dev/null 2>&1; then
+    fail "--afk-daemon-down accepted a missing value"
+  fi
+  pass "renderer reports the away-mode half-state only when its caller supplies the signal"
+}
+
 test_repair_lines() {
   local home out
   home="$TMP_ROOT/repair-home"
@@ -181,6 +214,7 @@ test_pi_snippet_uses_effective_extension_path() {
 test_selected_harness_block_only
 test_unknown_fallback
 test_conditional_stanzas
+test_afk_daemon_down_stanza
 test_repair_lines
 test_cross_harness_ordinary_continuation_and_repair_matrix
 test_pi_signed_preserves_identity_with_pi_supervision_protocol

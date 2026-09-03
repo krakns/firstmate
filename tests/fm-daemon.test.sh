@@ -693,7 +693,7 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
   local dir state fakebin task win pane key reason i escalations
   dir=$(make_supercase enriched-wedge-declared-wait)
   state="$dir/state"; fakebin="$dir/fakebin"
-  task=paused-wedge-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  task="paused-wedge-w1"; win="sess:fm-$task"; pane="$dir/pane.txt"
   key=$(printf '%s' "$task" | tr ':/.' '___')
   fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
   printf 'working: dispatching the long audit\npaused: the audit engine is running to completion\n' \
@@ -2680,6 +2680,72 @@ test_oldest_line_age_fails_closed_on_unreadable_sidecar() {
   pass "_oldest_line_age fails closed to 999999 on an empty or non-numeric .since sidecar"
 }
 
+# stale_marker_record and the pause-marker writer both stamp with `_now > marker`,
+# which truncates before `date` produces output: a SIGTERM in that window (the reap
+# this branch establishes as recurring) or a full disk leaves the marker empty.
+# Reading its content back as `$(( now - $(cat marker) ))` is then a syntax error
+# that ABORTS housekeeping outright, and because both writers only create a marker
+# that does not already exist, the truncated marker is never repaired - housekeeping
+# stays dead for the rest of the daemon's life, so the pause re-surface and the
+# catch-all heartbeat scan never run again. Assert the whole function still succeeds
+# AND that a later section still executed.
+_run_housekeeping_over_marker() {  # <state> <fakebin> <window> -> status
+  PATH="$2:$PATH" FM_FAKE_TMUX_WINDOW="$3" FM_FAKE_TMUX_CAPTURE="$1/pane.txt" \
+    FM_STATE_OVERRIDE="$1" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=3600 \
+    housekeeping "$1"
+}
+
+test_housekeeping_survives_a_truncated_marker() {
+  local dir state fakebin task win key marker paused status content
+  for content in '' 'abc' '17x'; do
+    dir=$(make_supercase "housekeeping-truncated-marker-${#content}")
+    state="$dir/state"; fakebin="$dir/fakebin"
+    task="truncated-marker-w1"; win="sess:fm-$task"
+    key=$(printf '%s' "$task" | tr ':/.' '___')
+    marker="$state/.subsuper-stale-$key"
+    paused="$state/.subsuper-paused-$key"
+    fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+    printf 'working: still going\n' > "$state/$task.status"
+    printf 'idle prompt $\n' > "$dir/pane.txt"
+    printf '%s' "$content" > "$marker"
+
+    rm -f "$state/.subsuper-last-scan"
+    status=0
+    _run_housekeeping_over_marker "$state" "$fakebin" "$win" || status=$?
+    [ "$status" -eq 0 ] \
+      || fail "housekeeping aborted on a stale marker holding [$content], status $status"
+    [ -e "$state/.subsuper-last-scan" ] \
+      || fail "the heartbeat scan never ran, so housekeeping died before it on a stale marker holding [$content]"
+
+    # The same hazard on the pause marker, which section (2b) reads after (2).
+    rm -f "$marker" "$state/.subsuper-last-scan"
+    printf 'paused: waiting on the vendor\n' >> "$state/$task.status"
+    printf '%s' "$content" > "$paused"
+    status=0
+    _run_housekeeping_over_marker "$state" "$fakebin" "$win" || status=$?
+    [ "$status" -eq 0 ] \
+      || fail "housekeeping aborted on a pause marker holding [$content], status $status"
+    [ -e "$state/.subsuper-last-scan" ] \
+      || fail "the heartbeat scan never ran, so housekeeping died before it on a pause marker holding [$content]"
+  done
+  # A truncated marker must age as very old, so the guarded work RUNS: the stale
+  # window matures into its escalation instead of being skipped forever.
+  dir=$(make_supercase housekeeping-truncated-marker-escalates)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task="truncated-marker-w2"; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: still going\n' > "$state/$task.status"
+  printf 'idle prompt $\n' > "$dir/pane.txt"
+  : > "$state/.subsuper-stale-$key"
+  _run_housekeeping_over_marker "$state" "$fakebin" "$win" \
+    || fail "housekeeping aborted while maturing a truncated stale marker"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a truncated stale marker did not fail closed to very old, so the wedge never escalated"
+  pass "housekeeping completes and fails closed over an empty or non-numeric stale/pause marker"
+}
+
 test_afk_start_refuses_when_flag_cannot_be_written
 test_afk_start_ignores_stale_pidfile_without_lock
 test_afk_start_reclaims_stale_daemon_lock_reused_pid
@@ -2805,3 +2871,4 @@ test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
 test_file_age_fails_closed_on_unreadable_mtime
 test_oldest_line_age_fails_closed_on_unreadable_sidecar
+test_housekeeping_survives_a_truncated_marker

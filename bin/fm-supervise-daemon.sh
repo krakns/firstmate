@@ -262,6 +262,28 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   esac
   echo $(( now - m ))
 }
+_epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; very large if unreadable
+  local f=$1 stamp now
+  [ -r "$f" ] || { echo 999999; return; }
+  # The marker/sidecar twin of _file_age, for files whose CONTENT is the epoch.
+  # Every writer here stamps with `_now > "$file"`, which truncates before `date`
+  # produces output, so a SIGTERM or a full disk in that window leaves the file
+  # empty or partial. `cat` still exits 0 on an empty file, so an inline
+  # `|| echo "$now"` fallback never fires: the arithmetic becomes a syntax error
+  # that aborts the whole enclosing function, and a non-numeric stamp trips
+  # `set -u`. Callers that never rewrite an existing marker would then be dead
+  # for the rest of the daemon's life. Validate both operands as plain digit
+  # runs and fail closed to "very old" so the guarded work RUNS.
+  stamp=$(cat "$f" 2>/dev/null)
+  case "$stamp" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  now=$(_now)
+  case "$now" in
+    ''|*[!0-9]*) echo 999999; return ;;
+  esac
+  echo $(( now - stamp ))
+}
 
 _hash_text() {
   if command -v md5 >/dev/null 2>&1; then printf '%s' "$1" | md5 -q
@@ -1000,28 +1022,13 @@ inject_wedge_alarm() {  # <state> <age-seconds>
 }
 
 _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first arrived (sidecar epoch)
-  local f=$1 since stamp now
+  local f=$1
   [ -s "$f" ] || { echo 999999; return; }
-  since="${f}.since"
-  [ -r "$since" ] || { echo 999999; return; }
-  # Same fail-closed discipline as _file_age. escalate_add writes the sidecar by
-  # truncating before `date` produces its output, so a reap or a full disk in
-  # that window leaves it empty or partial; `cat` still exits 0, so the `|| echo
-  # 0` fallback never fired and a non-numeric stamp aborted the arithmetic
-  # inside the substitution. Both callers below feed this straight into
-  # `[ "$age" -ge N ]`, which then errored and took the false branch - stranding
-  # every buffered away-mode escalation, since with batching on the only other
-  # flush is the shutdown trap, and suppressing the wedge alarm that exists to
-  # notice exactly that. 999999 flushes and alarms instead.
-  stamp=$(cat "$since" 2>/dev/null)
-  case "$stamp" in
-    ''|*[!0-9]*) echo 999999; return ;;
-  esac
-  now=$(_now)
-  case "$now" in
-    ''|*[!0-9]*) echo 999999; return ;;
-  esac
-  echo $(( now - stamp ))
+  # Both callers below feed this straight into `[ "$age" -ge N ]`, so an
+  # unreadable sidecar must not strand the buffered away-mode escalations: with
+  # batching on the only other flush is the shutdown trap, and the wedge alarm
+  # exists to notice exactly that. _epoch_age's 999999 flushes and alarms.
+  _epoch_age "${f}.since"
 }
 
 # --- housekeeping (runs every tick while the watcher is mid-cycle) ----------
@@ -1040,8 +1047,7 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest pause_secs
-  now=$(_now)
+  local state=$1 due f key task win marker age last max_defer oldest pause_secs
   migrate_watcher_pause_markers "$state"
 
   # (1) batch flush
@@ -1091,7 +1097,7 @@ housekeeping() {  # <state>
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
-    age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
+    age=$(_epoch_age "$marker")
     [ "$age" -ge "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" ] || continue
     stale_window_is_busy "$win" "$state"
     case "$?" in
@@ -1132,7 +1138,7 @@ housekeeping() {  # <state>
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
-    age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
+    age=$(_epoch_age "$marker")
     [ "$age" -ge "$pause_secs" ] || continue
     # Endpoint-readability probe only: exit code 2 means the capture failed, so the
     # endpoint is gone and there is nothing left to re-surface. The busy/idle verdict

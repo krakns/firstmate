@@ -746,7 +746,15 @@ fi
 # --- 4. supervision operating instructions ----------------------------------
 stage supervision-instructions
 AFK_PRESENT=0
-[ -e "$STATE/.afk" ] && AFK_PRESENT=1
+# Away mode flagged with no live identity-matched daemon is the half-state where
+# the flag claims supervision nothing is providing. fm_afk_flag_without_live_daemon
+# in bin/fm-wake-lib.sh is the single owner of that question; answer it once here,
+# beside the raw flag, so every surface below this point tells the same story.
+AFK_DAEMON_DOWN=0
+if [ -e "$STATE/.afk" ]; then
+  AFK_PRESENT=1
+  ! fm_afk_flag_without_live_daemon "$STATE" || AFK_DAEMON_DOWN=1
+fi
 X_MODE_PRESENT=0
 [ -f "$CONFIG/x-mode.env" ] && X_MODE_PRESENT=1
 
@@ -769,6 +777,7 @@ fi
   --harness "$PRIMARY_HARNESS" \
   --read-only "$READ_ONLY" \
   --afk "$AFK_PRESENT" \
+  --afk-daemon-down "$AFK_DAEMON_DOWN" \
   --x-mode "$X_MODE_PRESENT"
 
 # --- 5. read-once contract -------------------------------------------------
@@ -854,7 +863,7 @@ done
 
 subsection "AFK"
 if [ -e "$STATE/.afk" ]; then
-  if fm_afk_flag_without_live_daemon "$STATE"; then
+  if [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
     # The flag is set but no live away-mode supervisor owns it - away mode is
     # claiming supervision it is not providing. Never report this as active:
     # say the danger plainly so a returning session repairs it. The read-only
@@ -927,6 +936,14 @@ if [ "$READ_ONLY" -eq 1 ]; then
 This session did not acquire the fleet lock. Stay read-only: do not arm,
 drain, spawn, steer, merge, or repair fleet state from here. Only a session
 with verified fleet-lock ownership may perform mutable follow-up.
+
+EOF
+elif [ "$AFK_PRESENT" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
+  cat <<'EOF'
+Away mode is flagged, BUT NO SUPERVISOR IS RUNNING: no live daemon owns this
+home, so nothing is supervising the fleet. Repair that first. Load /afk and
+relaunch the daemon, or exit away mode properly, and do not trust away-mode
+notifications until a daemon is running.
 
 EOF
 elif [ "$AFK_PRESENT" -eq 1 ]; then
