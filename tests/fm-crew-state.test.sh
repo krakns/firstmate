@@ -248,6 +248,19 @@ gate: review
 EOF
 }
 
+run_awaiting_only_running() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  awaiting_agent: parked 2m10s
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+EOF
+}
+
 run_parked_in_gate_block() {  # <branch>
   cat <<EOF
 run:
@@ -425,6 +438,27 @@ test_scalar_gate_parked_not_superseded() {
   assert_contains "$out" "1 finding(s)" "scalar gate wait includes finding count"
   assert_not_contains "$out" "superseded" "scalar gate wait not flagged stale"
   pass "scalar gate parked run is not flagged superseded"
+}
+
+# An `awaiting_agent` wait with no gate block and a non-parked status word is
+# the gate signal that ONLY bin/fm-nm-run-lib.sh's fm_nm_run_is_gate_parked
+# recognizes. It has to land in the parked arm, because that same predicate is
+# what lets fm_nm_run_is_pipeline_owned_active accept a gate as age-unbounded
+# custody evidence: a gate that bound the exemption and then read `working`
+# would absorb this crew's signals for as long as the wait lasts.
+test_awaiting_only_wait_is_parked_not_working() {
+  reset_fakes
+  local d; d=$(new_case parked-awaiting-only)
+  make_repo_on_branch "$d/wt" fm/feat-ao
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-ao.meta" "window=fm:fm-feat-ao" "worktree=$d/wt" "kind=ship"
+  printf 'needs-decision: review gate\n' > "$d/state/feat-ao.status"
+  FM_FAKE_AXI_STATUS="$(run_awaiting_only_running fm/feat-ao)"
+  local out; out=$(run_crew_state "$d" feat-ao)
+  assert_contains "$out" "state: parked" "an awaiting_agent wait -> parked"
+  assert_not_contains "$out" "state: working" "a gate signal must never read working"
+  assert_contains "$out" "source: run-step" "an awaiting_agent wait -> run-step source"
+  pass "an awaiting_agent wait alone reads parked, not working"
 }
 
 test_gate_block_parked_not_superseded() {
@@ -1774,6 +1808,7 @@ test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_genuine_parked_not_superseded
 test_scalar_gate_parked_not_superseded
+test_awaiting_only_wait_is_parked_not_working
 test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done

@@ -544,7 +544,6 @@ if [ "$HAVE_RUN" = 1 ]; then
     status=$(strip_quotes "$(nm_field status)")
     RUN_STATUS=$status
     outcome=$(strip_quotes "$(nm_field outcome)")
-    awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
     gate_status=$(nm_gate_status)
     has_gate=0
     nm_has_gate && has_gate=1
@@ -557,7 +556,18 @@ if [ "$HAVE_RUN" = 1 ]; then
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
       esac
-    elif [ -n "$awaiting" ] || [ "$status" = awaiting_approval ] || [ "$status" = fix_review ] || [ -n "$gate_status" ] || [ "$has_gate" = 1 ]; then
+    # Gate detection asks bin/fm-nm-run-lib.sh's fm_nm_run_is_gate_parked, which
+    # is the ONE owner of the shared gate signals (an awaiting_agent or gate
+    # block, or an awaiting_approval/fix_review status word), plus this reader's
+    # own extra nm_gate_status signal. Routing through it rather than respelling
+    # those signals here is what makes the exemption's safety argument
+    # STRUCTURAL: fm_nm_run_is_pipeline_owned_active accepts a gate as
+    # age-unbounded custody evidence only because gate evidence always lands in
+    # this parked arm, never in the working arm below. Spelled twice, a later
+    # signal added to the library alone would silently move a stranded run into
+    # working and make a wedged crew invisible again; as a union of the shared
+    # predicate with a local extra, parked here is a superset by construction.
+    elif fm_nm_run_is_gate_parked "$RUN_OUT" || [ -n "$gate_status" ]; then
       if [ "$has_gate" = 1 ]; then
         gate=$(nm_gate_line_name)
       else

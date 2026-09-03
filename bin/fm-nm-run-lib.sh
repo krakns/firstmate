@@ -169,6 +169,16 @@ fm_nm_run_is_active() {  # <toon-output>
 # that the custody record is current, and a parked run never maps to `working`
 # (bin/fm-crew-state.sh maps it to `parked`, which supervision surfaces rather
 # than absorbs), so it cannot make a wedged crew invisible.
+#
+# That last clause is the reason the exemption below accepts a gate WITHOUT an
+# age bound, so it is enforced rather than asserted: this is the ONE place the
+# shared gate signals are spelled, and bin/fm-crew-state.sh selects its `parked`
+# arm by calling here (union'd with its own extra nm_gate_status signal) instead
+# of respelling them. Adding a signal here therefore widens that parked arm in
+# the same edit. Never let a second copy of these signals grow: a signal known
+# here but not there would bind the exemption age-unbounded and then fall
+# through to `working`, restoring the permanent supervision blind spot the bound
+# exists to close.
 fm_nm_run_is_gate_parked() {  # <toon-output>
   local status
   status=$(fm_nm_strip_quotes "$(fm_nm_field "$1" status)")
