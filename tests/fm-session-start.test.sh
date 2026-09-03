@@ -2458,7 +2458,42 @@ EOF
     "the supervision block did not name the flag-without-daemon half-state"
   assert_contains "$out" "Away mode is flagged, BUT NO SUPERVISOR IS RUNNING" \
     "the closing next step did not name the flag-without-daemon half-state"
+  # This session DOES hold the lock, so it is the one that can repair: the
+  # relaunch instruction must survive, and the read-only advisory must not appear.
+  assert_contains "$out" "relaunch the daemon, or exit away mode properly" \
+    "the lock-holding digest lost the repair instruction"
+  assert_not_contains "$out" "report it to the session holding the lock" \
+    "the lock-holding digest deferred repair to some other session"
   pass "every away-mode surface reports no supervisor when the flag has no live daemon"
+}
+
+test_afk_half_state_respects_the_read_only_contract() {
+  local rec root home fakebin out holder_pid
+  rec=$(new_world afk-no-daemon-read-only)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  # Away mode flagged with no live daemon, in a session that did NOT acquire the
+  # fleet lock. The danger must still be named in full - detecting and surfacing
+  # it is the entire point - but relaunching the daemon contends for the daemon
+  # lock, which is fleet-state repair this session must not perform. The same
+  # digest tells it not to repair, so it must not also tell it to relaunch.
+  : > "$home/state/.afk"
+  sleep 300 &
+  holder_pid=$!
+  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+
+  assert_contains "$out" "READ-ONLY SESSION" "the case did not actually reach the read-only path"
+  assert_contains "$out" "NO SUPERVISOR IS RUNNING"     "the read-only digest stopped naming the away-mode half-state"
+  assert_contains "$out" "report it to the session holding the lock"     "the read-only digest did not point repair at the lock holder"
+  assert_not_contains "$out" "relaunch the daemon, or exit away mode properly"     "the read-only digest still told a non-lock-holding session to relaunch the daemon"
+  pass "the away-mode half-state names the danger read-only without prescribing repair"
 }
 
 test_supervision_block_exactly_one_and_pi_diagnostic() {
@@ -2650,6 +2685,7 @@ test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_afk_subsection_alarms_when_flag_has_no_live_daemon
+test_afk_half_state_respects_the_read_only_contract
 test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker

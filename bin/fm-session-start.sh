@@ -870,7 +870,14 @@ if [ -e "$STATE/.afk" ]; then
     # guard above raises the bordered alarm when work is in flight; this line
     # catches the idle-fleet case the guard skips.
     printf 'present, BUT NO SUPERVISOR IS RUNNING - away mode is flagged with no live daemon, so nothing is supervising.\n'
-    printf 'Load /afk and relaunch the daemon, or exit away mode properly; do not trust away-mode notifications until it is running.\n'
+    if [ "$READ_ONLY" -eq 1 ]; then
+      # Naming the danger is the whole point, so a read-only session still gets
+      # it in full. Relaunching contends for the daemon lock, which is fleet-state
+      # repair this session must not perform, so it reports instead.
+      printf 'Do not trust away-mode notifications until it is running. Repairing this needs the fleet lock, so report it to the session holding the lock.\n'
+    else
+      printf 'Load /afk and relaunch the daemon, or exit away mode properly; do not trust away-mode notifications until it is running.\n'
+    fi
   else
     printf 'present - away-mode supervision is active; the daemon owns the watcher.\n'
   fi

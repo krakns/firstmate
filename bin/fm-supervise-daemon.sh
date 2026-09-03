@@ -265,7 +265,10 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   # that drives batch flushes, stale rechecks, and the catch-all scan. An empty
   # token does not abort (the shell evaluates it as 0) but is just as untrue an
   # age, so both are rejected here. 999999 makes the gate RUN instead of skip,
-  # which is the safe direction.
+  # which is the safe direction. Both operands are then forced to base 10, because
+  # a validated digit run may still carry a leading zero, which bash would read as
+  # octal: "08" aborts the arithmetic exactly as a non-numeric token does, and
+  # "0123" silently yields 83 instead of 123.
   case "$m" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
@@ -273,7 +276,7 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   case "$now" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
-  echo $(( now - m ))
+  echo $(( 10#$now - 10#$m ))
 }
 _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; very large if unreadable
   local f=$1 stamp now
@@ -286,7 +289,9 @@ _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; ver
   # that aborts the whole enclosing function, and a non-numeric stamp trips
   # `set -u`. Callers that never rewrite an existing marker would then be dead
   # for the rest of the daemon's life. Validate both operands as plain digit
-  # runs and fail closed to "very old" so the guarded work RUNS.
+  # runs, force base 10 the same way _file_age does so a leading-zero stamp can
+  # neither abort the arithmetic nor be misread as octal, and fail closed to
+  # "very old" so the guarded work RUNS.
   stamp=$(cat "$f" 2>/dev/null)
   case "$stamp" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
@@ -295,7 +300,7 @@ _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; ver
   case "$now" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
-  echo $(( now - stamp ))
+  echo $(( 10#$now - 10#$stamp ))
 }
 
 _hash_text() {

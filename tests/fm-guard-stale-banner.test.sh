@@ -695,6 +695,38 @@ test_pi_harness_routes_itself_to_the_extension_model() {
   pass "fm-guard stale banner: Pi and pi-signed primaries route themselves to the extension model"
 }
 
+test_fm_path_age_reads_leading_zero_tokens_as_decimal() {
+  # fm_path_age feeds the guard verdict's beacon freshness test. A digit run with
+  # a leading zero is read as octal by bash: "08" aborts the arithmetic inside the
+  # command substitution so the function prints nothing and its `[ "$age" -lt N ]`
+  # callers raise "integer expression expected" and take the false branch, while
+  # "0123" silently yields 83 instead of 123. Assert the exact decimal age, since
+  # checking only for the absence of an error would pass against the silent half.
+  local out stamp expected
+  for stamp in 08 09 0123 000 123; do
+    expected=$(( 10#$stamp ))
+    out=$(FM_STATE_OVERRIDE="$TMP_ROOT" bash -c '
+      . "$1"
+      _stub_mtime=$2; _stub_clock=$3
+      fm_path_mtime() { printf "%s" "$_stub_mtime"; }
+      date() { printf "%s" "$_stub_clock"; }
+      fm_path_age /nonexistent-path
+    ' _ "$ROOT/bin/fm-wake-lib.sh" "$stamp" "$(( 10#$stamp + 700 ))" 2>&1)
+    [ "$out" = 700 ] \
+      || fail "fm_path_age misread a leading-zero mtime [$stamp] (decimal $expected) as base 8 or aborted, got: [$out]"
+  done
+  # The clock operand carries the same hazard.
+  out=$(FM_STATE_OVERRIDE="$TMP_ROOT" bash -c '
+    . "$1"
+    fm_path_mtime() { printf "200"; }
+    date() { printf "0900"; }
+    fm_path_age /nonexistent-path
+  ' _ "$ROOT/bin/fm-wake-lib.sh" 2>&1)
+  [ "$out" = 700 ] \
+    || fail "fm_path_age misread a leading-zero clock as base 8 or aborted, got: [$out]"
+  pass "fm-wake-lib: fm_path_age reads leading-zero tokens as decimal instead of octal"
+}
+
 test_away_flag_without_live_daemon_alarms() {
   local dir out home
   dir=$(make_guard_case away-flag-no-daemon)
@@ -810,6 +842,7 @@ test_read_only_before_writable_does_not_consume_full_banner
 test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
+test_fm_path_age_reads_leading_zero_tokens_as_decimal
 test_away_flag_without_live_daemon_alarms
 test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale

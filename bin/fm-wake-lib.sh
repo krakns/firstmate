@@ -96,6 +96,9 @@ fm_path_mtime() {
 # and callers feed the result straight into `[ "$age" -ge N ]`, which would then
 # error with "integer expression expected" and silently take the false branch.
 # 999999 keeps every such caller on its age-exceeded branch instead.
+# Both operands are then forced to base 10, because a validated digit run may
+# still carry a leading zero, which bash would read as octal: "08" aborts the
+# arithmetic exactly as a non-numeric token does, and "0123" silently yields 83.
 fm_path_age() {
   local path=$1 m now
   m=$(fm_path_mtime "$path") || { echo 999999; return; }
@@ -106,7 +109,7 @@ fm_path_age() {
   case "$now" in
     ''|*[!0-9]*) echo 999999; return ;;
   esac
-  echo $(( now - m ))
+  echo $(( 10#$now - 10#$m ))
 }
 
 # fm_watcher_lock_unheld <state>

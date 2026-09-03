@@ -64,6 +64,17 @@ test_afk_daemon_down_stanza() {
   assert_not_contains "$out" "keep normal harness supervision paused" \
     "the renderer still told the reader to keep supervision paused with no live daemon"
 
+  # A read-only caller must still be told the half-state, but repairing it
+  # contends for the daemon lock, which the read-only contract reserves for the
+  # lock holder - the same stanza block already says do not repair fleet state.
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --read-only 1 --afk 1 --afk-daemon-down 1)
+  assert_contains "$out" "- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING" \
+    "the read-only stanza stopped naming the flag-without-daemon half-state"
+  assert_contains "$out" "report it to the session holding the lock" \
+    "the read-only stanza did not point repair at the lock holder"
+  assert_not_contains "$out" "Load /afk and relaunch the daemon" \
+    "the read-only stanza still prescribed a relaunch it must not perform"
+
   # The signal is only meaningful alongside --afk 1: away mode being off is not an
   # alarm, whatever a caller passes here.
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 0 --afk-daemon-down 1)

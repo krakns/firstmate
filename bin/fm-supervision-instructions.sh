@@ -213,7 +213,9 @@ if [ "$READ_ONLY" -eq 1 ]; then
 else
   printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
 fi
-if [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
+if [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ] && [ "$READ_ONLY" -eq 1 ]; then
+  printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no live daemon owns this home, so nothing is supervising. Repairing this needs the fleet lock, so report it to the session holding the lock rather than relaunching from here.'
+elif [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
   printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no live daemon owns this home, so nothing is supervising. Load /afk and relaunch the daemon, or exit away mode properly, before relying on away-mode supervision.'
 elif [ "$AFK" -eq 1 ]; then
   printf '%s\n' '- Away mode: active; load /afk and keep normal harness supervision paused while the daemon owns the watcher.'

@@ -2642,6 +2642,46 @@ test_file_age_fails_closed_on_unreadable_mtime() {
   pass "_file_age fails closed to 999999 on an empty or non-numeric mtime read"
 }
 
+test_age_helpers_read_leading_zero_tokens_as_decimal() {
+  # A digit run can still carry a leading zero, which bash reads as octal: "08"
+  # and "09" abort the arithmetic inside the command substitution exactly as a
+  # non-numeric token does, so the helper printed NOTHING and its caller raised
+  # the same "[: : integer expression expected" this branch exists to remove;
+  # "0123" is quieter and worse, silently yielding 83 instead of 123. Both
+  # operands must be read as base 10, so assert the exact decimal age rather than
+  # merely the absence of an error.
+  # _stub_* names deliberately: _file_age and _epoch_age declare their own `now`
+  # and `stamp` locals, which would dynamically shadow any stub variable sharing
+  # those names and make the stub read empty.
+  local tmp buf age _stub_token _stub_clock
+  tmp=$(mktemp "$TMP_ROOT/leading-zero.XXXXXX"); : > "$tmp"
+  buf=$(mktemp "$TMP_ROOT/leading-zero-buf.XXXXXX"); printf 'one escalation\n' > "$buf"
+  for _stub_token in 08 09 0123 000; do
+    _stub_clock=$(( 10#$_stub_token + 500 ))
+    age=$( _stat_file_mtime() { printf '%s' "$_stub_token"; }; _now() { printf '%s' "$_stub_clock"; }; _file_age "$tmp" )
+    [ "$age" = 500 ] \
+      || fail "_file_age misread a leading-zero mtime [$_stub_token] as base 8 or aborted, got: [$age]"
+    printf '%s' "$_stub_token" > "$tmp"
+    age=$( _now() { printf '%s' "$_stub_clock"; }; _epoch_age "$tmp" )
+    [ "$age" = 500 ] \
+      || fail "_epoch_age misread a leading-zero stamp [$_stub_token] as base 8 or aborted, got: [$age]"
+    printf '%s' "$_stub_token" > "${buf}.since"
+    age=$( _now() { printf '%s' "$_stub_clock"; }; _oldest_line_age "$buf" )
+    [ "$age" = 500 ] \
+      || fail "_oldest_line_age misread a leading-zero sidecar [$_stub_token] as base 8 or aborted, got: [$age]"
+  done
+  # A leading-zero CLOCK is the same hazard on the other operand.
+  printf '100' > "$tmp"
+  age=$( _now() { printf '0900'; }; _epoch_age "$tmp" )
+  [ "$age" = 800 ] \
+    || fail "_epoch_age misread a leading-zero clock as base 8 or aborted, got: [$age]"
+  age=$( _stat_file_mtime() { printf '100'; }; _now() { printf '0900'; }; _file_age "$tmp" )
+  [ "$age" = 800 ] \
+    || fail "_file_age misread a leading-zero clock as base 8 or aborted, got: [$age]"
+  rm -f "$tmp" "$buf" "${buf}.since"
+  pass "the age helpers read leading-zero tokens as decimal instead of octal"
+}
+
 test_oldest_line_age_fails_closed_on_unreadable_sidecar() {
   # escalate_add truncates the .since sidecar before `date` writes into it, so a
   # reap or a full disk in that window leaves it empty or partial. `cat` still
@@ -2920,5 +2960,6 @@ test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
 test_file_age_fails_closed_on_unreadable_mtime
+test_age_helpers_read_leading_zero_tokens_as_decimal
 test_oldest_line_age_fails_closed_on_unreadable_sidecar
 test_housekeeping_survives_a_truncated_marker
