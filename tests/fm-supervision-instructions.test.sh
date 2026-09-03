@@ -56,9 +56,9 @@ test_afk_daemon_down_stanza() {
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 0)
   assert_contains "$out" "- Away mode: active" "--afk-daemon-down 0 changed the live-daemon wording"
 
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 1)
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 1 --afk-absence-proven 1)
   assert_contains "$out" "- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING" \
-    "the renderer did not name the flag-without-daemon half-state"
+    "the renderer did not name the proven-absence half-state"
   assert_not_contains "$out" "- Away mode: active" \
     "the renderer still called away mode active with no live daemon"
   assert_not_contains "$out" "keep normal harness supervision paused" \
@@ -67,13 +67,24 @@ test_afk_daemon_down_stanza() {
   # A read-only caller must still be told the half-state, but repairing it
   # contends for the daemon lock, which the read-only contract reserves for the
   # lock holder - the same stanza block already says do not repair fleet state.
-  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --read-only 1 --afk 1 --afk-daemon-down 1)
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --read-only 1 --afk 1 --afk-daemon-down 1 --afk-absence-proven 1)
   assert_contains "$out" "- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING" \
-    "the read-only stanza stopped naming the flag-without-daemon half-state"
+    "the read-only stanza stopped naming the proven-absence half-state"
   assert_contains "$out" "report it to the session holding the lock" \
     "the read-only stanza did not point repair at the lock holder"
   assert_not_contains "$out" "Load /afk and relaunch the daemon" \
     "the read-only stanza still prescribed a relaunch it must not perform"
+
+  # Absence PROVEN and ownership UNVERIFIABLE are different claims, and the
+  # weaker one is the default so a caller that cannot tell them apart never
+  # asserts an absence it has not established.
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness codex --afk 1 --afk-daemon-down 1)
+  assert_contains "$out" "- Away mode: FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED" \
+    "omitting --afk-absence-proven did not fall back to the weaker unconfirmed claim"
+  assert_not_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "the renderer asserted proven absence without being told the absence was proven"
+  assert_contains "$out" "cannot be confirmed as owning this home" \
+    "the unconfirmed stanza did not name unverifiable ownership"
 
   # The signal is only meaningful alongside --afk 1: away mode being off is not an
   # alarm, whatever a caller passes here.
@@ -100,11 +111,11 @@ test_afk_repair_line_tracks_daemon_ownership() {
   assert_contains "$out" "Away mode owns watcher supervision" \
     "--afk-daemon-down 0 changed the live-daemon repair line"
 
-  out=$(FM_HOME="$home" "$RENDER" --harness claude --afk 1 --afk-daemon-down 1 --repair-line)
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --afk 1 --afk-daemon-down 1 --afk-absence-proven 1 --repair-line)
   assert_not_contains "$out" "Away mode owns watcher supervision" \
     "the repair line still claimed away mode owns supervision with no live daemon"
-  assert_contains "$out" "no live daemon owns watcher supervision" \
-    "the repair line did not name the flag-without-daemon half-state"
+  assert_contains "$out" "no away-mode daemon is running" \
+    "the repair line did not name the proven-absence half-state"
   assert_contains "$out" "ensure the daemon is running" \
     "the repair line lost its action clause in the half-state"
 

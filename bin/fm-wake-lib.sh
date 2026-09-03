@@ -329,6 +329,32 @@ fm_afk_flag_without_live_daemon() {  # <state>
   return 0
 }
 
+# fm_afk_daemon_absence_is_proven <state>
+# True only when away mode is flagged and NO daemon process is running at all:
+# the singleton lock is absent, records no pid, or records a pid that is not
+# alive. False when a live daemon pid IS present but its ownership could not be
+# verified, which fm_afk_daemon_owns_supervision reports identically to absence
+# even though the two are very different things to tell a captain.
+# That second case is reachable by design, not by accident:
+# bin/fm-supervise-daemon.sh lets a daemon start and keep supervising when it
+# cannot record its own process identity, because a supervisor must not refuse to
+# run over an unreadable `ps`, and the lock then carries no pid-identity for that
+# daemon's whole life. Identity can also drift on a host where fm_pid_identity
+# falls back to `ps -o lstart=`.
+# Callers use this to choose the strength of their claim. Proven absence earns a
+# flat "no supervisor is running"; an unverifiable live daemon earns "supervision
+# could not be confirmed", because a detector built because away mode asserted
+# supervision it did not have must not itself assert an absence it has not
+# proven. Both stay loud and both keep their repair instruction.
+fm_afk_daemon_absence_is_proven() {  # <state>
+  local state=$1 pid
+  [ -e "$state/.afk" ] || return 1
+  pid=$(cat "$state/.supervise-daemon.lock/pid" 2>/dev/null) || return 0
+  [ -n "$pid" ] || return 0
+  fm_pid_alive "$pid" && return 1
+  return 0
+}
+
 # fm_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
 # Model-aware "is supervision healthy right now" verdict for the pull warning
 # guard (bin/fm-guard.sh), NOT the arm layer or the turn-end guard. Sets:

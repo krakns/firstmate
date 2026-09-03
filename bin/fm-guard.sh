@@ -186,6 +186,8 @@ if [ "$watcher_healthy" = false ]; then
     [ -e "$STATE/.afk" ] && afk=1
     afk_daemon_down=0
     [ "$watcher_down_reason" = no-afk-daemon ] && afk_daemon_down=1
+    afk_absence_proven=0
+    [ "$afk_daemon_down" -eq 1 ] && fm_afk_daemon_absence_is_proven "$STATE" && afk_absence_proven=1
     queue_arg=0
     "$queue_pending" && queue_arg=1
     x_mode=0
@@ -194,15 +196,19 @@ if [ "$watcher_healthy" = false ]; then
       --read-only "$READ_ONLY" \
       --afk "$afk" \
       --afk-daemon-down "$afk_daemon_down" \
+      --afk-absence-proven "$afk_absence_proven" \
       --x-mode "$x_mode" \
       --queue-pending "$queue_arg" \
       --repair-line 2>/dev/null || printf '%s\n' 'Repair missing watcher supervision according to the session-start operating block.')
     rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     {
       printf '●%s\n' "$rule"
-      if [ "$watcher_down_reason" = no-afk-daemon ]; then
+      if [ "$watcher_down_reason" = no-afk-daemon ] && [ "$afk_absence_proven" -eq 1 ]; then
         printf '●  AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING\n'
-        watcher_cause=$(printf 'away mode is flagged but no live away-mode supervisor owns this home (last beat: %s)' "$beacon_desc")
+        watcher_cause=$(printf 'away mode is flagged and no away-mode supervisor process is running for this home (last beat: %s)' "$beacon_desc")
+      elif [ "$watcher_down_reason" = no-afk-daemon ]; then
+        printf '●  AWAY MODE FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED\n'
+        watcher_cause=$(printf 'away mode is flagged and a supervisor process is running, but it cannot be confirmed as owning this home, so supervision is unproven (last beat: %s)' "$beacon_desc")
       elif [ "$watcher_down_reason" = no-watcher ]; then
         printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
         watcher_cause=$(printf 'no live watcher process holds this home lock (last beat: %s)' "$beacon_desc")

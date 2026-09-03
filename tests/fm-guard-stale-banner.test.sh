@@ -763,8 +763,8 @@ test_away_flag_without_live_daemon_alarms() {
   out=$(run_guard_case_autoarm "$dir")
   [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
     || fail "a fresh beacon with a dead away-mode daemon must raise the away-mode alarm, got: $out"
-  assert_contains "$out" "away mode is flagged but no live away-mode supervisor owns this home" \
-    "away-mode banner must name the flag-without-daemon cause"
+  assert_contains "$out" "no away-mode supervisor process is running for this home" \
+    "away-mode banner must name the proven-absence cause"
   # The banner's own repair line must not contradict the header it sits under.
   assert_not_contains "$out" "Away mode owns watcher supervision" \
     "the banner's repair line still claimed away mode owns supervision under a no-supervisor header"
@@ -788,11 +788,41 @@ test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon() {
   out=$(run_guard_case_autoarm "$dir")
   [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
     || fail "a long-stale beacon with a dead away-mode daemon must still raise the away-mode alarm, got: $out"
-  assert_contains "$out" "away mode is flagged but no live away-mode supervisor owns this home" \
-    "away-mode banner must name the flag-without-daemon cause at any beacon age"
+  assert_contains "$out" "no away-mode supervisor process is running for this home" \
+    "away-mode banner must name the proven-absence cause at any beacon age"
   assert_not_contains "$out" "no watcher has a fresh beacon" \
     "a reaped away-mode daemon must not be reported as a generic stale beacon"
   pass "fm-guard stale banner: away flag with a dead daemon alarms as away-mode even when the beacon is long stale"
+}
+
+test_away_flag_with_unverifiable_daemon_says_unconfirmed_not_absent() {
+  local dir out home pid
+  dir=$(make_guard_case away-flag-unverifiable-daemon)
+  home=$(case_home "$dir")
+  # A LIVE daemon whose ownership cannot be verified: the lock names a running pid
+  # but carries no recorded identity, which is exactly what the daemon leaves
+  # behind when it could not read its own `ps` at startup and kept supervising
+  # anyway. Absence is NOT proven here, so the banner must not assert that nothing
+  # is supervising - the detector must not repeat away mode's own sin of claiming
+  # something it has not established. It must still be loud and still say what to do.
+  sleep 300 &
+  pid=$!
+  : > "$home/state/.afk"
+  touch "$home/state/.last-watcher-beat"
+  mkdir -p "$home/state/.supervise-daemon.lock"
+  printf '%s\n' "$pid" > "$home/state/.supervise-daemon.lock/pid"
+  out=$(run_guard_case_autoarm "$dir")
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED")" -eq 1 ] \
+    || fail "an unverifiable live daemon must alarm as unconfirmed, got: $out"
+  assert_not_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "the banner asserted proven absence for a live daemon it merely could not verify"
+  assert_contains "$out" "cannot be confirmed as owning this home" \
+    "the banner did not name the unverifiable-ownership cause"
+  assert_not_contains "$out" "Away mode owns watcher supervision" \
+    "the repair line still claimed away mode owns supervision under an unconfirmed header"
+  pass "fm-guard stale banner: a live but unverifiable daemon reads as unconfirmed, not as absent"
 }
 
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale() {
@@ -867,5 +897,6 @@ test_read_only_never_mutates_stale_banner_state_files
 test_fm_path_age_reads_leading_zero_tokens_as_decimal
 test_away_flag_without_live_daemon_alarms
 test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
+test_away_flag_with_unverifiable_daemon_says_unconfirmed_not_absent
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale
 test_away_flag_with_live_daemon_is_healthy

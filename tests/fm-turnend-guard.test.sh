@@ -20,7 +20,11 @@ TMP_ROOT=$(fm_test_tmproot fm-turnend-guard)
 fm_git_identity fmtest fmtest@example.invalid
 
 REQUIRED_REASON='watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn'
-AWAY_REQUIRED_REASON='Away mode owns watcher supervision'
+# The clause every away-mode block keeps, whatever the half-state: the repair
+# points at the daemon rather than at normal supervision. The ownership claim
+# itself is NOT invariant - it is true only when a daemon provably owns the home,
+# so the cases below pin the stronger wording individually.
+AWAY_REQUIRED_REASON='instead of starting normal supervision directly'
 
 # --- PREDICATE: bin/fm-supervision-lib.sh -----------------------------------
 
@@ -1300,6 +1304,62 @@ test_hook_claude_mode_allows_on_fresh_rewake_epoch() {
   pass "fm-turnend-guard --claude: fresh rewake epoch prevents a duplicate continuation for the same event"
 }
 
+# The away-mode allow gate is the most safety-critical consumer in this change:
+# with .afk set and a live identity-matched daemon, a beacon that reads as fresh
+# lets the turn end. FM_SUP_WATCHER_FRESH is a SECOND owner of "is the beacon
+# fresh" over the same file, and a raw subtraction let a beacon stamped in the
+# FUTURE read as fresh (a negative age is -lt any grace), allowing a blind turn
+# end on a beacon whose age was never measurable.
+test_hook_claude_mode_blocks_on_a_future_dated_beacon_in_away_mode() {
+  local dir out status future stamped pid
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-future-beacon-afk")
+  : > "$dir/state/task1.meta"
+  : > "$dir/state/.afk"
+  sleep 300 &
+  pid=$!
+  record_daemon_lock "$dir" "$pid" \
+    || { kill "$pid" 2>/dev/null; fail "could not record a live away-mode daemon lock"; }
+  # Relative to now, never a fixed calendar date, so this cannot quietly stop
+  # being a future date and degenerate into an ordinary stale beacon.
+  future=$(date -v+1H '+%Y%m%d%H%M' 2>/dev/null || date -d '+1 hour' '+%Y%m%d%H%M') \
+    || fail "could not compute a future timestamp on this platform"
+  touch -t "$future" "$dir/state/.last-watcher-beat"
+  stamped=$(stat -f %m "$dir/state/.last-watcher-beat" 2>/dev/null \
+    || stat -c %Y "$dir/state/.last-watcher-beat" 2>/dev/null)
+  [ -n "$stamped" ] && [ "$(date +%s)" -lt "$stamped" ] \
+    || { kill "$pid" 2>/dev/null; fail "the beacon is not actually stamped in the future, so this case proves nothing"; }
+  out=$(run_hook_claude "$dir" true); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$status" -ne 0 ] \
+    || fail "the away-mode allow gate ended the turn blind on a future-dated beacon that read as fresh: $out"
+  pass "fm-turnend-guard --claude: a future-dated beacon is not mistaken for a fresh one at the away-mode allow gate"
+}
+
+# The turn-end banner and its own repair line must tell the same story, the same
+# way the pull banner already must.
+test_hook_claude_banner_and_repair_line_agree_in_the_away_half_state() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-afk-half-state")
+  : > "$dir/state/task1.meta"
+  : > "$dir/state/.afk"
+  out=$(run_hook_claude "$dir" true 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "the guard must still block in the away-mode half-state: $out"
+  case "$out" in
+    *"AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING"*) ;;
+    *) fail "the turn-end banner did not name the away-mode half-state: $out" ;;
+  esac
+  case "$out" in
+    *"Away mode owns watcher supervision"*)
+      fail "the turn-end repair line still claimed away mode owns supervision under a no-supervisor header: $out" ;;
+  esac
+  case "$out" in
+    *"ensure the daemon is running"*) ;;
+    *) fail "the turn-end repair line lost its action clause: $out" ;;
+  esac
+  pass "fm-turnend-guard --claude: the away-mode banner and its repair line agree"
+}
+
 # A backwards clock step - an NTP correction after a long sleep, a VM snapshot
 # restore, a captain fixing a wrong clock - leaves the auto-arm epoch marker
 # stamped in the FUTURE. Its age is then negative, and `[ "$age" -lt 15 ]` reads
@@ -1704,7 +1764,13 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open() {
   seed_claude_budget "$dir" 3
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
   expect_code 2 "$status" "away mode must not use a stale Stop-autoarm failure to fail open"
-  assert_contains "$out" 'Away mode owns watcher supervision' "away-mode block lost its daemon ownership guidance"
+  # This home has .afk with no daemon lock at all, so absence is proven and the
+  # block must point at the daemon WITHOUT claiming away mode owns supervision -
+  # that claim is false here and sits three lines under a no-supervisor header.
+  assert_contains "$out" 'load /afk and ensure the daemon is running' \
+    "away-mode block lost its daemon ownership guidance"
+  assert_not_contains "$out" 'Away mode owns watcher supervision' \
+    "away-mode block still claimed away mode owns supervision with no daemon running"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "away mode consumed the Stop-autoarm attended alarm"
   pass "fm-turnend-guard --claude: away ownership excludes the Stop-autoarm fail-open"
 }
@@ -1872,6 +1938,9 @@ test_hook_away_mode_blocks_on_dead_daemon() {
   out=$(run_hook "$dir" false); status=$?
   expect_code 2 "$status" "a daemon lock left by a dead daemon must not satisfy supervision"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
+  # A dead recorded pid IS proven absence, so the flat claim is earned here.
+  assert_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "a dead daemon was not reported as proven absence"
   pass "fm-turnend-guard: away mode blocks on a dead away-mode daemon"
 }
 
@@ -1888,6 +1957,12 @@ test_hook_away_mode_blocks_on_pid_reused_daemon() {
   wait "$pid" 2>/dev/null || true
   expect_code 2 "$status" "a live pid whose recorded identity does not match must not satisfy supervision"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
+  # A live pid with a mismatched identity is unverifiable ownership, NOT proven
+  # absence: the banner must not assert that nothing is supervising.
+  assert_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
+    "a live but unverifiable daemon was not reported as unconfirmed"
+  assert_not_contains "$out" "NO SUPERVISOR IS RUNNING" \
+    "the banner asserted proven absence for a live daemon it merely could not verify"
   pass "fm-turnend-guard: away mode blocks on a pid-reused away-mode daemon lock"
 }
 
@@ -1907,6 +1982,12 @@ test_hook_away_mode_blocks_on_stale_beacon() {
   wait "$pid" 2>/dev/null || true
   expect_code 2 "$status" "a live daemon that stopped restarting its watcher must block once the beacon goes stale"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
+  # Ownership genuinely holds here - the block is on beacon staleness alone - so
+  # the ownership wording is correct and must be retained.
+  assert_contains "$out" "Away mode owns watcher supervision" \
+    "a provably-owning daemon lost its ownership guidance to a half-state banner"
+  assert_not_contains "$out" "SUPERVISOR IS RUNNING" \
+    "a provably-owning daemon was reported as a half-state"
   pass "fm-turnend-guard: away-mode daemon ownership never substitutes for a fresh beacon"
 }
 
@@ -1981,6 +2062,8 @@ test_hook_claude_mode_allows_when_autoarm_owner_alive
 test_hook_claude_mode_repeated_failed_to_arming_interleavings_reach_fail_open
 test_hook_claude_mode_terminal_boundary_excludes_starting_owner
 test_hook_claude_mode_allows_on_fresh_rewake_epoch
+test_hook_claude_mode_blocks_on_a_future_dated_beacon_in_away_mode
+test_hook_claude_banner_and_repair_line_agree_in_the_away_half_state
 test_hook_claude_mode_blocks_on_a_future_dated_rewake_epoch
 test_hook_claude_mode_blocks_on_abandoned_autoarm_claim
 test_hook_claude_mode_blocks_on_pid_reused_arming_claim
