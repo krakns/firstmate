@@ -724,7 +724,42 @@ test_fm_path_age_reads_leading_zero_tokens_as_decimal() {
   ' _ "$ROOT/bin/fm-wake-lib.sh" 2>&1)
   [ "$out" = 700 ] \
     || fail "fm_path_age misread a leading-zero clock as base 8 or aborted, got: [$out]"
-  pass "fm-wake-lib: fm_path_age reads leading-zero tokens as decimal instead of octal"
+
+  # A stamp NEWER than the clock passes both operand validators and subtracts to a
+  # negative age, which callers read as "fresh"/"quiet" and silently skip on. The
+  # contract is a real non-negative age or the sentinel, nothing else.
+  out=$(FM_STATE_OVERRIDE="$TMP_ROOT" bash -c '
+    . "$1"
+    fm_path_mtime() { printf "1757001800"; }
+    date() { printf "1757000000"; }
+    fm_path_age /nonexistent-path
+  ' _ "$ROOT/bin/fm-wake-lib.sh" 2>&1)
+  [ "$out" = 999999 ] \
+    || fail "fm_path_age returned a negative age for a future mtime instead of failing closed, got: [$out]"
+  # An operand long enough to overflow wraps negative rather than erroring, so the
+  # same result gate must catch it without its own special case.
+  out=$(FM_STATE_OVERRIDE="$TMP_ROOT" bash -c '
+    . "$1"
+    fm_path_mtime() { printf "99999999999999999999"; }
+    date() { printf "1757000000"; }
+    fm_path_age /nonexistent-path
+  ' _ "$ROOT/bin/fm-wake-lib.sh" 2>&1)
+  [ "$out" = 999999 ] \
+    || fail "fm_path_age let an overflowed operand escape as a negative age, got: [$out]"
+  pass "fm-wake-lib: fm_path_age returns a real non-negative age or the sentinel, never a negative one"
+}
+
+test_future_dated_beacon_is_not_healthy() {
+  local dir out home
+  dir=$(make_guard_case future-beacon)
+  home=$(case_home "$dir")
+  # Observable behaviour behind the fm_path_age contract: a beacon stamped in the
+  # future must never read as healthy supervision.
+  touch -t 203001010000 "$home/state/.last-watcher-beat"
+  out=$(run_guard_case_autoarm "$dir")
+  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
+    || fail "a future-dated beacon was accepted as healthy supervision: $out"
+  pass "fm-guard stale banner: a future-dated beacon is not accepted as fresh"
 }
 
 test_away_flag_without_live_daemon_alarms() {
@@ -843,6 +878,7 @@ test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
 test_fm_path_age_reads_leading_zero_tokens_as_decimal
+test_future_dated_beacon_is_not_healthy
 test_away_flag_without_live_daemon_alarms
 test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale

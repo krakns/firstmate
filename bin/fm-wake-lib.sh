@@ -89,6 +89,24 @@ fm_path_mtime() {
   fi
 }
 
+# _fm_age_result <computed> -> the measured age, or 999999 if it is not one.
+# THE CONTRACT fm_path_age guarantees, enforced here at its single return
+# boundary rather than input class by input class: what escapes is ALWAYS either
+# a plain non-negative base-10 number of seconds that was really measured, or
+# 999999. Never empty, never negative, never a non-numeric token. Operand
+# validation rejects the unusable inputs we know about; this gate rejects
+# whatever the arithmetic actually produced, so an input class no one has thought
+# of yet - a file stamped in the future after a backwards clock step, a digit run
+# so long it overflows and wraps negative - fails closed to the sentinel instead
+# of needing its own special case. Extend the guarantee here; do not append
+# another per-input check.
+_fm_age_result() {
+  case "${1-}" in
+    ''|*[!0-9]*) printf '999999\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 # fm_path_age <path> -> seconds since mtime, or 999999 when that cannot be read.
 # Fail closed to "very old" unless both the mtime and the clock are plain runs
 # of digits. A stat that exits 0 while printing a non-numeric token would abort
@@ -99,6 +117,9 @@ fm_path_mtime() {
 # Both operands are then forced to base 10, because a validated digit run may
 # still carry a leading zero, which bash would read as octal: "08" aborts the
 # arithmetic exactly as a non-numeric token does, and "0123" silently yields 83.
+# _fm_age_result then enforces the contract above on the way out, so a negative
+# age can never reach a caller: the turn-end guard reads one as FRESH and allows
+# a blind turn end, and the task inbox reads one as quiet.
 fm_path_age() {
   local path=$1 m now
   m=$(fm_path_mtime "$path") || { echo 999999; return; }
@@ -109,7 +130,7 @@ fm_path_age() {
   case "$now" in
     ''|*[!0-9]*) echo 999999; return ;;
   esac
-  echo $(( 10#$now - 10#$m ))
+  _fm_age_result "$(( 10#$now - 10#$m ))"
 }
 
 # fm_watcher_lock_unheld <state>

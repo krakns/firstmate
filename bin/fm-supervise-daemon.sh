@@ -248,6 +248,22 @@ _now() { date +%s; }
 # elapsed time is unknown, so no captain-facing message ever reports it as a
 # duration that was actually observed.
 UNREADABLE_AGE=999999
+# THE CONTRACT every age helper below guarantees, enforced here at their single
+# return boundary rather than input class by input class: what escapes is ALWAYS
+# either a plain non-negative base-10 number of seconds that was really measured,
+# or UNREADABLE_AGE. Never empty, never negative, never a non-numeric token.
+# Operand validation rejects the unusable inputs each helper knows about; this
+# gate rejects whatever the arithmetic actually produced, so an input class no
+# one has thought of yet - a stamp newer than the clock after a backwards clock
+# step, a digit run so long it overflows and wraps negative - fails closed to the
+# sentinel instead of needing its own special case. Extend the guarantee here;
+# do not append another per-input check.
+_age_result() {  # <computed> -> the measured age, or UNREADABLE_AGE if it is not one
+  case "${1-}" in
+    ''|*[!0-9]*) printf '%s\n' "$UNREADABLE_AGE" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
 _age_text() {  # <age> -> the elapsed time for captain-facing text
   case "$1" in
     "$UNREADABLE_AGE") printf 'an unreadable length of time (its timestamp could not be read)' ;;
@@ -268,7 +284,8 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   # which is the safe direction. Both operands are then forced to base 10, because
   # a validated digit run may still carry a leading zero, which bash would read as
   # octal: "08" aborts the arithmetic exactly as a non-numeric token does, and
-  # "0123" silently yields 83 instead of 123.
+  # "0123" silently yields 83 instead of 123. _age_result then enforces the
+  # contract on the way out.
   case "$m" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
@@ -276,7 +293,7 @@ _file_age() {  # seconds since mtime; very large if missing or unreadable
   case "$now" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
-  echo $(( 10#$now - 10#$m ))
+  _age_result "$(( 10#$now - 10#$m ))"
 }
 _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; very large if unreadable
   local f=$1 stamp now
@@ -290,8 +307,10 @@ _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; ver
   # `set -u`. Callers that never rewrite an existing marker would then be dead
   # for the rest of the daemon's life. Validate both operands as plain digit
   # runs, force base 10 the same way _file_age does so a leading-zero stamp can
-  # neither abort the arithmetic nor be misread as octal, and fail closed to
-  # "very old" so the guarded work RUNS.
+  # neither abort the arithmetic nor be misread as octal, and return through
+  # _age_result so the contract holds here too: a marker stamped in the future
+  # fails closed to "very old" rather than yielding a negative age that would
+  # silently defer the wedge escalation and the matured pause recheck.
   stamp=$(cat "$f" 2>/dev/null)
   case "$stamp" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
@@ -300,7 +319,7 @@ _epoch_age() {  # <file> -> seconds since the epoch stamp written inside it; ver
   case "$now" in
     ''|*[!0-9]*) echo "$UNREADABLE_AGE"; return ;;
   esac
-  echo $(( 10#$now - 10#$stamp ))
+  _age_result "$(( 10#$now - 10#$stamp ))"
 }
 
 _hash_text() {
@@ -1045,7 +1064,9 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
   # Both callers below feed this straight into `[ "$age" -ge N ]`, so an
   # unreadable sidecar must not strand the buffered away-mode escalations: with
   # batching on the only other flush is the shutdown trap, and the wedge alarm
-  # exists to notice exactly that. _epoch_age's 999999 flushes and alarms.
+  # exists to notice exactly that. Delegating to _epoch_age inherits the same
+  # contract - a real non-negative age or 999999, nothing else - so this flushes
+  # and alarms rather than silently deferring.
   _epoch_age "${f}.since"
 }
 

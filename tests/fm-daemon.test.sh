@@ -2736,6 +2736,74 @@ _run_housekeeping_over_marker() {  # <state> <fakebin> <window> -> status
     housekeeping "$1"
 }
 
+test_age_helpers_fail_closed_on_a_stamp_newer_than_the_clock() {
+  # A backwards clock step - an NTP correction after a long sleep, a VM snapshot
+  # restore, a captain fixing a wrong clock - leaves a stamp NEWER than the clock.
+  # Both operands are still plain digit runs, so operand validation passes them and
+  # the subtraction yields a negative age that every caller feeds straight into an
+  # integer comparison, takes the false branch on, and silently skips the guarded
+  # work: the same silent-skip outcome the 2026-09-02 defect had, but with no error
+  # printed at all. The contract is that a nonsensical age fails closed to the
+  # sentinel so the work RUNS and the escalation FIRES, so assert the observable
+  # behaviour and not only the returned number.
+  local tmp buf age dir state fakebin task win key
+  tmp=$(mktemp "$TMP_ROOT/future-stamp.XXXXXX"); : > "$tmp"
+  buf=$(mktemp "$TMP_ROOT/future-stamp-buf.XXXXXX"); printf 'one escalation\n' > "$buf"
+  age=$( _stat_file_mtime() { printf '1757001800'; }; _now() { printf '1757000000'; }; _file_age "$tmp" )
+  [ "$age" = 999999 ] \
+    || fail "_file_age returned a negative age for a future mtime instead of failing closed, got: [$age]"
+  printf '1757001800' > "$tmp"
+  age=$( _now() { printf '1757000000'; }; _epoch_age "$tmp" )
+  [ "$age" = 999999 ] \
+    || fail "_epoch_age returned a negative age for a future stamp instead of failing closed, got: [$age]"
+  printf '1757001800' > "${buf}.since"
+  age=$( _now() { printf '1757000000'; }; _oldest_line_age "$buf" )
+  [ "$age" = 999999 ] \
+    || fail "_oldest_line_age returned a negative age for a future sidecar instead of failing closed, got: [$age]"
+  # An operand long enough to overflow wraps negative rather than erroring, so the
+  # same result gate must catch it without its own special case.
+  age=$( _stat_file_mtime() { printf '99999999999999999999'; }; _now() { printf '1757000000'; }; _file_age "$tmp" )
+  [ "$age" = 999999 ] \
+    || fail "_file_age let an overflowed operand escape as a negative age, got: [$age]"
+  rm -f "$tmp" "$buf" "${buf}.since"
+
+  # Observable behaviour: a stale marker stamped in the future must still mature
+  # into its wedge escalation rather than being deferred forever.
+  dir=$(make_supercase housekeeping-future-stale-marker)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task="future-marker-w1"; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: still going\n' > "$state/$task.status"
+  printf 'idle prompt $\n' > "$dir/pane.txt"
+  echo $(( $(date +%s) + 3600 )) > "$state/.subsuper-stale-$key"
+  _run_housekeeping_over_marker "$state" "$fakebin" "$win" \
+    || fail "housekeeping failed over a future-dated stale marker"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a future-dated stale marker silently skipped its wedge escalation: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  grep -F "timestamp could not be read" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "the escalation reported an unmeasurable age as a real duration: $(cat "$state/.subsuper-escalations")"
+
+  # Observable behaviour at the housekeeping gate itself: a future-dated tick
+  # marker must not switch housekeeping off, so a later section still runs.
+  dir=$(make_supercase housekeeping-future-pause-marker)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task="future-marker-w2"; win="sess:fm-$task"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'working: dispatching the long audit\npaused: the audit engine is running to completion\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$dir/pane.txt"
+  echo $(( $(date +%s) + 3600 )) > "$state/.subsuper-paused-$key"
+  _run_housekeeping_over_marker "$state" "$fakebin" "$win" \
+    || fail "housekeeping failed over a future-dated pause marker"
+  grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null 2>&1 \
+    || fail "a future-dated pause marker silently skipped its recheck: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  [ -e "$state/.subsuper-last-scan" ] \
+    || fail "the heartbeat scan never ran over a future-dated marker"
+  pass "the age helpers fail closed when a stamp is newer than the clock, so the guarded work still runs"
+}
+
 test_housekeeping_survives_a_truncated_marker() {
   local dir state fakebin task win key marker paused status label content spec
   # Each label names its own case directory. make_supercase is a deterministic
@@ -2963,3 +3031,4 @@ test_file_age_fails_closed_on_unreadable_mtime
 test_age_helpers_read_leading_zero_tokens_as_decimal
 test_oldest_line_age_fails_closed_on_unreadable_sidecar
 test_housekeeping_survives_a_truncated_marker
+test_age_helpers_fail_closed_on_a_stamp_newer_than_the_clock
