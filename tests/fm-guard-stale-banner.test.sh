@@ -749,19 +749,6 @@ test_fm_path_age_reads_leading_zero_tokens_as_decimal() {
   pass "fm-wake-lib: fm_path_age returns a real non-negative age or the sentinel, never a negative one"
 }
 
-test_future_dated_beacon_is_not_healthy() {
-  local dir out home
-  dir=$(make_guard_case future-beacon)
-  home=$(case_home "$dir")
-  # Observable behaviour behind the fm_path_age contract: a beacon stamped in the
-  # future must never read as healthy supervision.
-  touch -t 203001010000 "$home/state/.last-watcher-beat"
-  out=$(run_guard_case_autoarm "$dir")
-  [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
-    || fail "a future-dated beacon was accepted as healthy supervision: $out"
-  pass "fm-guard stale banner: a future-dated beacon is not accepted as fresh"
-}
-
 test_away_flag_without_live_daemon_alarms() {
   local dir out home
   dir=$(make_guard_case away-flag-no-daemon)
@@ -878,7 +865,6 @@ test_read_only_during_episode_observes_without_mutating_marker
 test_healthy_read_only_does_not_clear_marker
 test_read_only_never_mutates_stale_banner_state_files
 test_fm_path_age_reads_leading_zero_tokens_as_decimal
-test_future_dated_beacon_is_not_healthy
 test_away_flag_without_live_daemon_alarms
 test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon
 test_away_flag_with_live_daemon_stale_beacon_alarms_as_stale

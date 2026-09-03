@@ -1308,11 +1308,20 @@ test_hook_claude_mode_allows_on_fresh_rewake_epoch() {
 # fails closed to its sentinel instead, so an unmeasurable age can never be
 # mistaken for a fresh one.
 test_hook_claude_mode_blocks_on_a_future_dated_rewake_epoch() {
-  local dir out status
+  local dir out status future stamped
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-future-epoch")
   : > "$dir/state/task1.meta"
   printf 'epoch=3 owner_pid=999 outcome=rewake updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
-  touch -t 203001010000 "$dir/state/.claude-autoarm-epoch"
+  # Relative to now, never a fixed calendar date: a hardcoded future year quietly
+  # stops being in the future once the clock passes it, and the case would then
+  # degenerate into an ordinary stale epoch that passes without testing anything.
+  future=$(date -v+1H '+%Y%m%d%H%M' 2>/dev/null || date -d '+1 hour' '+%Y%m%d%H%M') \
+    || fail "could not compute a future timestamp on this platform"
+  touch -t "$future" "$dir/state/.claude-autoarm-epoch"
+  stamped=$(stat -f %m "$dir/state/.claude-autoarm-epoch" 2>/dev/null \
+    || stat -c %Y "$dir/state/.claude-autoarm-epoch" 2>/dev/null)
+  [ -n "$stamped" ] && [ "$(date +%s)" -lt "$stamped" ] \
+    || fail "the epoch marker is not actually stamped in the future, so this case proves nothing"
   out=$(run_hook_claude "$dir" true); status=$?
   [ "$status" -ne 0 ] \
     || fail "--claude mode allowed a blind stop on a future-dated rewake epoch, whose negative age read as fresh: $out"
