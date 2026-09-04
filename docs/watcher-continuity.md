@@ -41,7 +41,8 @@ The one daytime system sleep on 2026-09-02, a 17:23 to 17:56 clamshell, has no r
 What is deliberately not established is the internal harness condition that triggers the reap, whether a lifetime cap, idle reaping, resource pressure, or a session compaction boundary.
 That lives in harness internals outside this repository, and it is recorded as unknown rather than guessed.
 It does not change the conclusion: the host can reap the job whatever its reason, so the daemon cannot protect itself and the contract must detect the half-state rather than trust the flag.
-That detection is `fm_afk_flag_without_live_daemon` in `bin/fm-wake-lib.sh`, which every supervision-health surface now consults before reporting away-mode supervision as active.
+That detection rests on `fm_afk_daemon_owns_supervision` in `bin/fm-wake-lib.sh`: `bin/fm-session-start.sh` and `bin/fm-turnend-guard.sh` read it through that library's `fm_afk_flag_without_live_daemon`, and `bin/fm-guard.sh` reaches the same fact as the `no-afk-daemon` supervision verdict, so none of them reports away-mode supervision as active on the flag alone.
+[`turnend-guard.md`](turnend-guard.md#guard-predicates) owns the resulting guard banners, including the split between proven absence and unconfirmed ownership.
 
 ## Actionable wake ordering
 
