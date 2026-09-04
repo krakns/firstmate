@@ -877,9 +877,9 @@ if [ -e "$STATE/.afk" ]; then
     # guard above raises the bordered alarm when work is in flight; this line
     # catches the idle-fleet case the guard skips.
     if [ "$AFK_ABSENCE_PROVEN" -eq 1 ]; then
-      printf 'present, BUT NO SUPERVISOR IS RUNNING - away mode is flagged and no away-mode daemon process is running, so nothing is supervising.\n'
+      printf 'present, BUT NO SUPERVISOR IS RUNNING - away mode is flagged and no away-mode daemon is running, so nothing is supervising.\n'
     else
-      printf 'present, BUT SUPERVISION CANNOT BE CONFIRMED - a daemon process is running but cannot be confirmed as owning this home, so supervision is unproven; check the daemon log for a warning that it could not record its process identity.\n'
+      printf 'present, BUT SUPERVISION CANNOT BE CONFIRMED - a daemon is running but cannot be confirmed as owning this home, so supervision is unproven.\n'
     fi
     if [ "$READ_ONLY" -eq 1 ]; then
       # Naming the danger is the whole point, so a read-only session still gets
@@ -958,19 +958,18 @@ with verified fleet-lock ownership may perform mutable follow-up.
 EOF
 elif [ "$AFK_PRESENT" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ] && [ "$AFK_ABSENCE_PROVEN" -eq 1 ]; then
   cat <<'EOF'
-Away mode is flagged, BUT NO SUPERVISOR IS RUNNING: no away-mode daemon process
-is running for this home, so nothing is supervising the fleet. Repair that
-first. Load /afk and relaunch the daemon, or exit away mode properly, and do not
-trust away-mode notifications until a daemon is running.
+Away mode is flagged, BUT NO SUPERVISOR IS RUNNING: no away-mode daemon is
+running for this home, so nothing is supervising the fleet. Repair that first.
+Load /afk and relaunch the daemon, or exit away mode properly, and do not trust
+away-mode notifications until a daemon is running.
 
 EOF
 elif [ "$AFK_PRESENT" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
   cat <<'EOF'
-Away mode is flagged, BUT SUPERVISION CANNOT BE CONFIRMED: a daemon process is
-running, but it cannot be confirmed as owning this home, so supervision is
-unproven. Resolve that first. Load /afk and confirm the daemon is supervising,
-and check the daemon log for a warning that it could not record its process
-identity; do not trust away-mode notifications until supervision is confirmed.
+Away mode is flagged, BUT SUPERVISION CANNOT BE CONFIRMED: a daemon is running,
+but it cannot be confirmed as owning this home, so supervision is unproven.
+Resolve that first. Load /afk and confirm the daemon is supervising; do not
+trust away-mode notifications until supervision is confirmed.
 
 EOF
 elif [ "$AFK_PRESENT" -eq 1 ]; then

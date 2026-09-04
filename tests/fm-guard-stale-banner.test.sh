@@ -763,7 +763,7 @@ test_away_flag_without_live_daemon_alarms() {
   out=$(run_guard_case_autoarm "$dir")
   [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
     || fail "a fresh beacon with a dead away-mode daemon must raise the away-mode alarm, got: $out"
-  assert_contains "$out" "no away-mode supervisor process is running for this home" \
+  assert_contains "$out" "no away-mode daemon is running for this home" \
     "away-mode banner must name the proven-absence cause"
   # The banner's own repair line must not contradict the header it sits under.
   assert_not_contains "$out" "Away mode owns watcher supervision" \
@@ -788,7 +788,7 @@ test_away_flag_without_live_daemon_alarms_on_a_long_stale_beacon() {
   out=$(run_guard_case_autoarm "$dir")
   [ "$(count_text "$out" "AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING")" -eq 1 ] \
     || fail "a long-stale beacon with a dead away-mode daemon must still raise the away-mode alarm, got: $out"
-  assert_contains "$out" "no away-mode supervisor process is running for this home" \
+  assert_contains "$out" "no away-mode daemon is running for this home" \
     "away-mode banner must name the proven-absence cause at any beacon age"
   assert_not_contains "$out" "no watcher has a fresh beacon" \
     "a reaped away-mode daemon must not be reported as a generic stale beacon"
@@ -846,8 +846,6 @@ test_away_flag_with_recycled_pid_reports_proven_absence() {
     || fail "a recycled pid must report proven absence, got: $out"
   assert_not_contains "$out" "SUPERVISION CANNOT BE CONFIRMED" \
     "a verified identity mismatch was reported as two-way uncertainty"
-  assert_not_contains "$out" "check the daemon log" \
-    "the captain was sent hunting for an identity warning that cannot exist for a recycled pid"
   pass "fm-guard stale banner: a recycled pid reports proven absence, not unconfirmed supervision"
 }
 

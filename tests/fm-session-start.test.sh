@@ -2463,7 +2463,7 @@ EOF
   assert_contains "$out" "relaunch the daemon, or exit away mode properly" \
     "the lock-holding digest lost the repair instruction"
   # The lock names no pid at all, so absence really is proven here.
-  assert_contains "$out" "no away-mode daemon process is running" \
+  assert_contains "$out" "no away-mode daemon is running" \
     "the digest did not report proven absence for a home with no daemon lock"
   assert_not_contains "$out" "report it to the session holding the lock" \
     "the lock-holding digest deferred repair to some other session"

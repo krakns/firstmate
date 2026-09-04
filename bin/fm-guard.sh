@@ -205,10 +205,10 @@ if [ "$watcher_healthy" = false ]; then
       printf '●%s\n' "$rule"
       if [ "$watcher_down_reason" = no-afk-daemon ] && [ "$afk_absence_proven" -eq 1 ]; then
         printf '●  AWAY MODE FLAGGED, BUT NO SUPERVISOR IS RUNNING\n'
-        watcher_cause=$(printf 'away mode is flagged and no away-mode supervisor process is running for this home (last beat: %s)' "$beacon_desc")
+        watcher_cause=$(printf 'away mode is flagged and no away-mode daemon is running for this home (last beat: %s)' "$beacon_desc")
       elif [ "$watcher_down_reason" = no-afk-daemon ]; then
         printf '●  AWAY MODE FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED\n'
-        watcher_cause=$(printf 'away mode is flagged and a supervisor process is running, but it cannot be confirmed as owning this home, so supervision is unproven (last beat: %s)' "$beacon_desc")
+        watcher_cause=$(printf 'away mode is flagged and a daemon is running, but it cannot be confirmed as owning this home, so supervision is unproven (last beat: %s)' "$beacon_desc")
       elif [ "$watcher_down_reason" = no-watcher ]; then
         printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
         watcher_cause=$(printf 'no live watcher process holds this home lock (last beat: %s)' "$beacon_desc")

@@ -227,13 +227,13 @@ else
   printf '%s\n' '- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.'
 fi
 if [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ] && [ "$AFK_ABSENCE_PROVEN" -eq 1 ] && [ "$READ_ONLY" -eq 1 ]; then
-  printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no away-mode daemon process is running for this home, so nothing is supervising. Repairing this needs the fleet lock, so report it to the session holding the lock rather than relaunching from here.'
+  printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no away-mode daemon is running for this home, so nothing is supervising. Repairing this needs the fleet lock, so report it to the session holding the lock rather than relaunching from here.'
 elif [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ] && [ "$READ_ONLY" -eq 1 ]; then
-  printf '%s\n' '- Away mode: FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED; a daemon process is running but cannot be confirmed as owning this home, so supervision is unproven. Repairing this needs the fleet lock, so report it to the session holding the lock rather than relaunching from here.'
+  printf '%s\n' '- Away mode: FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED; a daemon is running but cannot be confirmed as owning this home, so supervision is unproven. Repairing this needs the fleet lock, so report it to the session holding the lock rather than relaunching from here.'
 elif [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ] && [ "$AFK_ABSENCE_PROVEN" -eq 1 ]; then
-  printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no away-mode daemon process is running for this home, so nothing is supervising. Load /afk and relaunch the daemon, or exit away mode properly, before relying on away-mode supervision.'
+  printf '%s\n' '- Away mode: FLAGGED, BUT NO SUPERVISOR IS RUNNING; no away-mode daemon is running for this home, so nothing is supervising. Load /afk and relaunch the daemon, or exit away mode properly, before relying on away-mode supervision.'
 elif [ "$AFK" -eq 1 ] && [ "$AFK_DAEMON_DOWN" -eq 1 ]; then
-  printf '%s\n' '- Away mode: FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED; a daemon process is running but cannot be confirmed as owning this home, so supervision is unproven. Load /afk and confirm the daemon is supervising, and check the daemon log for a warning that it could not record its process identity, before relying on away-mode supervision.'
+  printf '%s\n' '- Away mode: FLAGGED, BUT SUPERVISION CANNOT BE CONFIRMED; a daemon is running but cannot be confirmed as owning this home, so supervision is unproven. Load /afk and confirm the daemon is supervising before relying on away-mode supervision.'
 elif [ "$AFK" -eq 1 ]; then
   printf '%s\n' '- Away mode: active; load /afk and keep normal harness supervision paused while the daemon owns the watcher.'
 else

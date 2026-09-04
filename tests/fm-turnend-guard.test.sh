@@ -208,6 +208,19 @@ nonexistent_pid() {
   printf '%s\n' "$pid"
 }
 
+# Epoch mtime of a file, the same way every bin/ reader resolves it: branch on
+# the platform, never chain `stat -f %m ... || stat -c %Y ...`. On GNU coreutils
+# `-f` is *filesystem* stat, which consumes the format string as a path, prints a
+# filesystem block on stdout and still yields output, so the chained form returns
+# that block instead of an epoch and every later integer test errors out.
+file_mtime_epoch() {
+  if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
+    stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
+  fi
+}
+
 watcher_identity() {
   local dir=$1 pid=$2
   FM_STATE_OVERRIDE="$dir/state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$dir/bin/fm-wake-lib.sh" "$pid"
@@ -1324,8 +1337,7 @@ test_hook_claude_mode_blocks_on_a_future_dated_beacon_in_away_mode() {
   future=$(date -v+1H '+%Y%m%d%H%M' 2>/dev/null || date -d '+1 hour' '+%Y%m%d%H%M') \
     || fail "could not compute a future timestamp on this platform"
   touch -t "$future" "$dir/state/.last-watcher-beat"
-  stamped=$(stat -f %m "$dir/state/.last-watcher-beat" 2>/dev/null \
-    || stat -c %Y "$dir/state/.last-watcher-beat" 2>/dev/null)
+  stamped=$(file_mtime_epoch "$dir/state/.last-watcher-beat")
   [ -n "$stamped" ] && [ "$(date +%s)" -lt "$stamped" ] \
     || { kill "$pid" 2>/dev/null; fail "the beacon is not actually stamped in the future, so this case proves nothing"; }
   out=$(run_hook_claude "$dir" true); status=$?
@@ -1378,8 +1390,7 @@ test_hook_claude_mode_blocks_on_a_future_dated_rewake_epoch() {
   future=$(date -v+1H '+%Y%m%d%H%M' 2>/dev/null || date -d '+1 hour' '+%Y%m%d%H%M') \
     || fail "could not compute a future timestamp on this platform"
   touch -t "$future" "$dir/state/.claude-autoarm-epoch"
-  stamped=$(stat -f %m "$dir/state/.claude-autoarm-epoch" 2>/dev/null \
-    || stat -c %Y "$dir/state/.claude-autoarm-epoch" 2>/dev/null)
+  stamped=$(file_mtime_epoch "$dir/state/.claude-autoarm-epoch")
   [ -n "$stamped" ] && [ "$(date +%s)" -lt "$stamped" ] \
     || fail "the epoch marker is not actually stamped in the future, so this case proves nothing"
   out=$(run_hook_claude "$dir" true); status=$?
