@@ -1,0 +1,5 @@
+ok - fm-control Devin interrupt: a revert picker a press opened is closed with Escape, never Enter
+ok - fm-control Devin: an open revert picker refuses every typed command
+not ok - an open exit picker (exit_picker_screen) should be confirmed
+error: task t1 is blocked on a prompt: Claude background-task exit picker. Refusing to type Enter into it.: expected exit 0, got 1
+exit=1

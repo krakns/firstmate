@@ -1,0 +1,8 @@
+ok - fm-control Devin interrupt: a revert picker a press opened is closed with Escape, never Enter
+ok - fm-control Devin: an open revert picker refuses every typed command
+ok - fm-control exit: an already-open Claude background-task picker is confirmed with one Enter
+ok - fm-control exit: the background-task picker /exit opens is confirmed and the agent stops
+ok - fm-control exit: a picker that renders after the submit returned is confirmed when the stop wait times out
+ok - fm-control exit: a confirmed picker that leaves the agent running fails without a second confirming Enter
+ok - fm-control exit: another harness still refuses the Claude picker
+exit=0
