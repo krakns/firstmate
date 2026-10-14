@@ -87,6 +87,12 @@ case "${1:-}" in
           ;;
       esac
     else
+      # Enter on Claude's background-task exit picker confirms Exit and stop
+      # tasks, and Claude quits; the screen returns to the shell's composer.
+      if [ "$payload" = Enter ] && [ -f "$D/picker" ]; then
+        rm -f "$D/picker"
+        printf 'zsh' > "$D/command"
+      fi
       printf '%s\n' "$payload" >> "$D/keys"
       case "$payload" in
         'export GOTMPDIR='*)
@@ -117,7 +123,9 @@ case "${1:-}" in
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     [ -z "${FM_FAKE_COMPOSER_READ_FAIL:-}" ] || exit 1
-    if [ -s "$D/composer" ]; then
+    if [ -f "$D/picker" ]; then
+      cat "$D/picker"
+    elif [ -s "$D/composer" ]; then
       printf '╭────╮\n│ %s  │\n╰────╯\n' "$(cat "$D/composer")"
     else
       printf '╭────╮\n│    │\n╰────╯\n'
@@ -2498,6 +2506,27 @@ test_exit_and_relaunch_remove_the_dialog_file() {
   pass "fm-control removes the dialog file after exit and after relaunch"
 }
 
+# An earlier exit left Claude's background-task picker open, so the composer
+# shows the picker rather than text. Relaunch confirms it and carries on.
+test_relaunch_confirms_a_left_open_background_picker() {
+  local dir out rc
+  dir=$(new_case picker-relaunch rl73)
+  add_ship_task "$dir" rl73 claude
+  printf '%s\n' \
+    '   Background work is running' \
+    '   The following will stop when you exit:' \
+    '   shell · sleep 600' \
+    '   ❯ 1. Exit and stop tasks' \
+    '     2. Stay' \
+    '   Enter to confirm · Esc to cancel' > "$dir/fake/picker"
+  out=$(run_control "$dir" rl73 relaunch --note "replace the agent"); rc=$?
+  expect_code 0 "$rc" "relaunch should confirm the picker and replace the agent"$'\n'"$out"
+  assert_contains "$out" "relaunched rl73 harness=claude" "the outcome should name the transition"
+  assert_not_contains "$(cat "$dir/fake/literal")" "/exit" "the picker must not be typed into"
+  ! grep -qx Escape "$dir/fake/keys" || fail "the picker must not be dismissed"
+  pass "fm-control relaunch: a background-task picker left open by an earlier exit is confirmed"
+}
+
 # The lock release removes paths at or under the control lock with rm, so a
 # recording rm sees the state directory at the moment of release without a
 # second overlapping command.
@@ -2530,6 +2559,7 @@ SH
 }
 
 test_exit_and_relaunch_remove_the_dialog_file
+test_relaunch_confirms_a_left_open_background_picker
 test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text

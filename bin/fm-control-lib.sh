@@ -235,6 +235,22 @@ fm_control_exit_command() {  # <harness>
   esac
 }
 
+# The dialog, named as bin/fm-composer-lib.sh's fm_composer_blocking_dialog
+# names it, that the exit command opens and that exit confirms with one Enter;
+# nothing when the adapter has none. Claude's /exit opens its background-task
+# picker while a background shell or monitor still runs, and the classifier
+# matches it only with "Exit and stop tasks" as the selected row, so Enter
+# stops those jobs and Claude quits (verified live, Claude Code 2.1.300). The
+# jobs belong to the task whose agent is being stopped. Any other recognised
+# dialog, and this one on another harness, is still refused.
+fm_control_exit_confirm_dialog() {  # <harness>
+  case "${1-}" in
+    claude) printf '%s' 'Claude background-task exit picker' ;;
+    codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|muse|rovo|agy|devin) ;;
+    *) return 1 ;;
+  esac
+}
+
 # The launch argument that makes a RELAUNCH of <harness> RESUME an exact agent
 # session instead of starting a fresh one, printed only when <registered-agent>
 # is the label that session reference belongs to; nothing otherwise.

@@ -412,6 +412,19 @@ refuse_blocking_prompt() {  # <dialog-name>
   die "task $ID is blocked on a prompt: $1. Refusing to type Enter into it."
 }
 
+# answer_exit_dialog <dialog-name>: confirm the harness's own exit dialog
+# (fm_control_exit_confirm_dialog) with one Enter, which picks the selected row
+# the classifier proved. Any other dialog refuses. A dialog still showing
+# after its one Enter is never answered again.
+answer_exit_dialog() {  # <dialog-name>
+  [ "$1" = "$(fm_control_exit_confirm_dialog "$HARNESS")" ] || refuse_blocking_prompt "$1"
+  [ -z "$EXIT_DIALOG" ] \
+    || die "exit-delivered $ID exit-command=$EXIT_COMMAND$EXIT_DIALOG agent-state=$(agent_state) exit=unconfirmed; task $ID still shows the $1 after one confirming Enter"
+  fm_backend_send_key "$BACKEND" "$T" Enter "$LABEL" \
+    || die "the Enter that confirms the $1 could not be sent to task $ID on $BACKEND"
+  EXIT_DIALOG=" exit-dialog=confirmed"
+}
+
 # rendered_matches <ere>: whether any row of the visible viewport matches.
 # An unreadable viewport is a no, so every caller treats it as missing proof.
 rendered_matches() {  # <ere>
@@ -635,7 +648,9 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local state cmd hazard composer_state cancel absence interrupt_result=not-needed
+  EXIT_DIALOG=
+  EXIT_COMMAND=not-needed
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
@@ -707,11 +722,38 @@ do_exit() {
   composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
     || composer_state=unknown
   # The classify that filled the sink ran in a subshell, so read the file
-  # rather than a function that subshell sourced.
+  # rather than a function that subshell sourced. A dialog already open means
+  # an earlier exit command is under way, so it is answered, not retyped.
   if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
-    dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    refuse_blocking_prompt "$dialog"
+    answer_exit_dialog "$(cat "$FM_COMPOSER_DIALOG_SINK")"
+  else
+    submit_exit_command "$composer_state"
   fi
+  state=$(wait_agent_state "$EXIT_WAIT" dead) || {
+    # A submit can return before any read sees the picker: a native busy
+    # verdict needs no composer read, and a cleared composer can be read
+    # before the picker renders. Read the screen once more here.
+    : > "$FM_COMPOSER_DIALOG_SINK" || true
+    fm_backend_composer_state "$BACKEND" "$T" "$LABEL" >/dev/null 2>&1 || true
+    if [ -s "$FM_COMPOSER_DIALOG_SINK" ]; then
+      answer_exit_dialog "$(cat "$FM_COMPOSER_DIALOG_SINK")"
+      state=$(wait_agent_state "$EXIT_WAIT" dead)
+    else
+      false
+    fi
+  } || die "exit-delivered $ID interrupt=$interrupt_result exit-command=$EXIT_COMMAND$EXIT_DIALOG agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
+  # The incarnation is over: retire its busy wiring so no stale record or
+  # orphaned generation survives the agent that produced it.
+  retire_busy_incarnation
+  printf 'stopped'
+}
+
+# submit_exit_command <composer-state>: type the harness's exit command into a
+# proven-empty composer and submit it, answering the exit dialog its Enter
+# opens. Sets EXIT_COMMAND=delivered.
+submit_exit_command() {  # <composer-state>
+  local composer_state=$1 verdict cmd
+  cmd=$(fm_control_exit_command "$HARNESS")
   case "$composer_state" in
     empty) ;;
     pending)
@@ -731,30 +773,13 @@ do_exit() {
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
     || die "the exit command could not be sent to task $ID on $BACKEND"
-  # The submitting Enter can open the picker. The agent is still alive, and
-  # another Enter would confirm the selected row. A dead agent may leave the
-  # same text behind; that is not a prompt still waiting.
-  if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
-    dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    if [ "$(agent_state)" != dead ]; then
-      refuse_blocking_prompt "$dialog"
-    fi
+  EXIT_COMMAND=delivered
+  # The submitting Enter can open the exit dialog while the agent is still
+  # alive. A dead agent may leave the same text behind; that is not a prompt
+  # still waiting.
+  if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ] && [ "$(agent_state)" != dead ]; then
+    answer_exit_dialog "$(cat "$FM_COMPOSER_DIALOG_SINK")"
   fi
-  state=$(wait_agent_state "$EXIT_WAIT" dead) || {
-    # A submit can return before any read sees the picker: a native busy
-    # verdict needs no composer read, and a cleared composer can be read
-    # before the picker renders. Read the screen once more here.
-    : > "$FM_COMPOSER_DIALOG_SINK" || true
-    fm_backend_composer_state "$BACKEND" "$T" "$LABEL" >/dev/null 2>&1 || true
-    if [ -s "$FM_COMPOSER_DIALOG_SINK" ]; then
-      refuse_blocking_prompt "$(cat "$FM_COMPOSER_DIALOG_SINK")"
-    fi
-    die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
-  }
-  # The incarnation is over: retire its busy wiring so no stale record or
-  # orphaned generation survives the agent that produced it.
-  retire_busy_incarnation
-  printf 'stopped'
 }
 
 # --- transactional relaunch -------------------------------------------------

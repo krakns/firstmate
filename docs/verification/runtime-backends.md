@@ -1385,12 +1385,33 @@ The picker is recognised by its recorded structure only: the heading on its own 
 The same strings quoted above a normal composer, as a diff, this note, or a test fixture shows them, are not a picker.
 Submit retries now stop after the Enter that opened the picker and report unknown.
 A typed submit to a pane that already shows the picker types nothing and sends no Enter.
-Exit reports that the worker is blocked on the Claude background-task exit picker and does not type another Enter.
-A submit can return before any read sees the picker, so exit reads the screen once more when its wait for the agent to stop times out, and names the picker there too.
+Exit on a Claude worker confirms the picker with one Enter, and only an agent still running after that Enter fails as unconfirmed; exit on any other harness still reports that the worker is blocked on the picker and types nothing.
+A submit can return before any read sees the picker, so exit reads the screen once more when its wait for the agent to stop times out, and confirms the picker there too.
 Exit does not report a stopped agent whose pane still shows the picker text as blocked on a prompt.
 The watcher does not read the picker: a pane parked on it keeps the ordinary stale triage.
 No recorded screen was available for a model-downgrade confirmation, an MCP approval, or a Claude exit confirmation other than this picker, so those dialogs are not covered.
-Refusing an Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
+Refusing a typed submit's Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
+
+Re-measured 2026-10-14 against Claude Code 2.1.300 in a pseudo-terminal, 160 columns by 50 rows, with tmux not installed and the Herdr lab not used.
+After one background `sleep 600` started through the Bash tool, `/exit` rendered the picker with two options:
+
+```text
+   Background work is running
+
+   The following will stop when you exit:
+
+   shell · sleep 600
+
+   ❯ 1. Exit and stop tasks
+     2. Stay
+
+   Enter to confirm · Esc to cancel
+```
+
+A worker on the same version also rendered a third option, `2. Move to background and exit`, between those two.
+`fm_composer_blocking_dialog` recognises both layouts.
+One Enter on that screen ended the Claude process within ten seconds, and no `sleep 600` process remained afterwards.
+`tests/fm-control.test.sh` carries both layouts as fixtures, and `tests/fm-control-relaunch.test.sh` carries the two-option one.
 
 ### Prune and respawn
 
