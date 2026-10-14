@@ -1,0 +1,10 @@
+# Claude Code 2.1.300 (Claude Code)
+# MCP servers configured for the worker session: peekaboo, other-server
+
+## Before (worker --settings without config/worker-mcp-deny):
+--settings {"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}
+MCP servers Claude starts: ["other-server","peekaboo"]
+
+## After (exact --settings fm-spawn emitted for a Claude crewmate with config/worker-mcp-deny = peekaboo):
+--settings {"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},"deniedMcpServers":[{"serverName":"peekaboo"}]}
+MCP servers Claude starts: ["other-server"]

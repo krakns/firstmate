@@ -1,0 +1,2 @@
+ok - claude 2.1.300 (Claude Code): deniedMcpServers in --settings drops the denied MCP server and keeps the rest
+bash tests/fm-claude-mcp-deny-live-e2e.test.sh  1.18s user 0.69s system 60% cpu 3.105 total
