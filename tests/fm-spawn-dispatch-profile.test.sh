@@ -1769,6 +1769,113 @@ test_claude_secondmate_launch_carries_the_attribution_policy() {
   pass "a claude secondmate launch carries the attribution-off policy too"
 }
 
+# config/worker-mcp-deny: MCP servers the primary reserves, kept out of every
+# Claude launch through a per-launch deniedMcpServers settings key.
+assert_worker_mcp_deny() {  # <launch-command> <expected-json-array> <what>
+  local launch=$1 expected=$2 what=$3 settings
+  settings=$(claude_settings_json_arg "$launch")
+  printf '%s' "$settings" | jq -e --argjson want "$expected" \
+    '.deniedMcpServers == $want and .feedbackDrafts == "off"' >/dev/null \
+    || fail "$what launch settings JSON does not deny exactly $expected: $settings"
+}
+
+test_claude_worker_mcp_deny_reaches_crewmate_scout_and_secondmate() {
+  local rec id sm out status kindflag want
+  want='[{"serverName":"peekaboo"},{"serverName":"other_srv-2.x"}]'
+  for kindflag in --ship --scout --secondmate; do
+    id="mcp-deny-${kindflag#--}-z30"
+    rec=$(make_spawn_case "mcp-deny-${kindflag#--}" claude "$id")
+    read_case_record "$rec"
+    printf '%s\n' '# Peekaboo allows one ScreenCaptureKit owner' '' '  peekaboo  ' 'other_srv-2.x' \
+      > "$HOME_DIR/config/worker-mcp-deny"
+    case "$kindflag" in
+    --ship) out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR") ;;
+    --scout) out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout) ;;
+    --secondmate)
+      sm="$CASE_DIR/secondmate-home"
+      make_seeded_secondmate_home "$sm" "$id"
+      out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+        run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+      ;;
+    esac
+    status=$?
+    expect_code 0 "$status" "claude $kindflag spawn with a worker MCP deny list should succeed"$'\n'"$out"
+    assert_worker_mcp_deny "$(cat "$LAUNCH_LOG")" "$want" "claude $kindflag"
+    assert_attribution_policy "$(cat "$LAUNCH_LOG")" "claude $kindflag with a deny list"
+  done
+  pass "config/worker-mcp-deny reaches every claude crewmate, scout, and secondmate launch"
+}
+
+test_worker_mcp_deny_reaches_secondmate_crew_launches() {
+  local rec sm_rec sm_id crew_id sm out status
+  sm_id=mcp-deny-sm-z34
+  crew_id=mcp-deny-sm-crew-z35
+  rec=$(make_spawn_case mcp-deny-primary claude "$sm_id")
+  sm_rec=$(make_spawn_case mcp-deny-sm claude "$crew_id")
+  read_case_record "$rec"
+  printf '%s\n' peekaboo > "$HOME_DIR/config/worker-mcp-deny"
+  sm="${sm_rec#*|}"
+  sm="${sm%%|*}"
+  make_seeded_secondmate_home "$sm" "$sm_id"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$sm_id" "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "secondmate spawn with a deny list should succeed"$'\n'"$out"
+  [ -e "$sm/config/worker-mcp-deny" ] || fail "secondmate home did not inherit config/worker-mcp-deny"
+
+  read_case_record "$sm_rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$crew_id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "secondmate crew spawn should succeed"$'\n'"$out"
+  assert_worker_mcp_deny "$(cat "$LAUNCH_LOG")" '[{"serverName":"peekaboo"}]' "secondmate crew claude"
+  pass "config/worker-mcp-deny is inherited so a secondmate's crew launch denies the same servers"
+}
+
+test_worker_mcp_deny_absent_empty_and_non_claude() {
+  local rec id out status settings case_name
+  for case_name in absent empty; do
+    id="mcp-deny-$case_name-z31"
+    rec=$(make_spawn_case "mcp-deny-$case_name" claude "$id")
+    read_case_record "$rec"
+    [ "$case_name" = absent ] || printf '%s\n' '# nothing reserved' '' > "$HOME_DIR/config/worker-mcp-deny"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 0 "$status" "claude spawn with an $case_name deny list should succeed"$'\n'"$out"
+    settings=$(claude_settings_json_arg "$(cat "$LAUNCH_LOG")")
+    printf '%s' "$settings" | jq -e 'has("deniedMcpServers") | not' >/dev/null \
+      || fail "an $case_name deny list still denied servers: $settings"
+  done
+  # Other runtimes never read Claude Code's MCP configuration.
+  id=mcp-deny-codex-z32
+  rec=$(make_spawn_case mcp-deny-codex codex "$id")
+  read_case_record "$rec"
+  printf '%s\n' peekaboo > "$HOME_DIR/config/worker-mcp-deny"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "codex spawn with a deny list should succeed"$'\n'"$out"
+  assert_not_contains "$(cat "$LAUNCH_LOG")" "deniedMcpServers" "codex must receive no Claude settings key"
+  pass "an absent or empty worker MCP deny list, or a non-claude runtime, leaves the launch unchanged"
+}
+
+test_worker_mcp_deny_malformed_entry_refuses_before_endpoint() {
+  local rec id out status bad n=0
+  for bad in 'two words' 'a,b' 'srv"x' '*' 'srv;rm' "srv\$X"; do
+    n=$((n + 1))
+    id="mcp-deny-bad-$n-z33"
+    rec=$(make_spawn_case "mcp-deny-bad-$n" claude "$id")
+    read_case_record "$rec"
+    printf '%s\n' peekaboo "$bad" > "$HOME_DIR/config/worker-mcp-deny"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+    status=$?
+    expect_code 1 "$status" "malformed deny entry '$bad' must refuse the spawn"
+    assert_contains "$out" "config/worker-mcp-deny has a malformed entry '$bad'" \
+      "the refusal must name the malformed entry '$bad'"
+    [ ! -s "$LAUNCH_LOG" ] || fail "a malformed deny entry '$bad' still launched a worker"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a malformed deny entry '$bad' still wrote a task record"
+  done
+  pass "a malformed worker MCP deny entry refuses the spawn before any launch or record"
+}
+
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
   id=profile-secondmate-z16
@@ -2341,6 +2448,10 @@ test_claude_crewmate_launch_carries_the_attribution_policy
 test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
 test_keep_ai_trailers_reaches_secondmate_crew_launches
 test_claude_secondmate_launch_carries_the_attribution_policy
+test_claude_worker_mcp_deny_reaches_crewmate_scout_and_secondmate
+test_worker_mcp_deny_reaches_secondmate_crew_launches
+test_worker_mcp_deny_absent_empty_and_non_claude
+test_worker_mcp_deny_malformed_entry_refuses_before_endpoint
 test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"

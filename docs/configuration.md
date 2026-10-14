@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker MCP server deny list](#worker-mcp-server-deny-list-configworker-mcp-deny), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -966,6 +966,25 @@ Names present in the registry produce no report; unknown or unverified names do 
 Each relaunch installs a fresh worker extension with the home's current list, so the replacement performs the same check.
 
 [`bin/fm-exclude-tools-lib.sh`](../bin/fm-exclude-tools-lib.sh) implements parsing and pre-launch validation for this contract; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)'s header owns the launch-flag mechanics.
+
+## Worker MCP server deny list (config/worker-mcp-deny)
+
+The optional local, gitignored `config/worker-mcp-deny` names MCP servers that only the primary may run, so no Claude worker this home launches starts its own copy.
+Use it for a server that tolerates one owner per machine, such as Peekaboo, whose ScreenCaptureKit capture jams when a second `peekaboo mcp serve` process starts.
+Claude Code keys a local-scope MCP server to the main repository path, and every worktree of that repository resolves to the same entry, so without this list each worker would start its own copy.
+With no file, or a file with no entries, every launch is unchanged.
+
+Create the file with one MCP server name per line, exactly as `claude mcp list` prints it, such as `peekaboo`.
+Blank lines and lines beginning with `#` are allowed, and surrounding whitespace on a line is trimmed; a trailing comment on an entry line is not allowed.
+An entry may use only `A-Z`, `a-z`, `0-9`, `_`, `.`, and `-`; any other character, or an unreadable or nonregular file, refuses the launch before its endpoint, local copy, or task record exists and names the file.
+
+Every Claude ship, scout, and secondmate spawn and relaunch passes the listed names as Claude Code's `deniedMcpServers` setting in its per-launch `--settings` value, so the denied servers never start while every other MCP server, including claude.ai connectors, stays available.
+The primary session is not launched by Firstmate, so it keeps the servers.
+Other runtimes do not read Claude Code's MCP configuration and are unaffected, and a raw launch command carries no Firstmate settings, so it is not covered.
+The file is read on every launch, so a change reaches the next worker or relaunch without a restart.
+It is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract, so a secondmate and its own Claude crewmates deny the same servers.
+
+[`bin/fm-exclude-tools-lib.sh`](../bin/fm-exclude-tools-lib.sh) implements parsing; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh)'s header owns the launch mechanics, and [runtime backend verification](verification/runtime-backends.md#worker-mcp-server-deny-list) holds the live evidence.
 
 ## Worker account pin (config/claude-account, config/pi-account)
 

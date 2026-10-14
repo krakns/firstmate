@@ -615,6 +615,28 @@ The real pane renders this inside a bordered box, omitted here for readability; 
 That capture demonstrated why each signature function matches the FULL captured tail rather than the Grok/Rovo/AGY busy-footer convention of the last 12 non-blank lines: a bordered dialog box renders many short lines of pure border and padding (`│  ...  │`) that are NOT whitespace-only, so the 12-line reduction pushed this exact heading text out of the window and silently defeated the match on the first attempt.
 None of these three runs ever answered its dialog (Escape only, never Enter), so no credential store was written to and no model tokens were spent.
 
+## Worker MCP server deny list
+
+`config/worker-mcp-deny` relies on Claude Code honoring the `deniedMcpServers` key from a launch's `--settings` value.
+Claude Code keys a local-scope MCP server to the main repository path, so a worker in any worktree of the primary's repository starts that server unless the key denies it.
+`tests/fm-claude-mcp-deny-live-e2e.test.sh` builds the key with the production parser and launches the real `claude` with two throwaway MCP servers under a throwaway `HOME`, a dead `ANTHROPIC_BASE_URL`, and a kill right after the init event.
+The init event must list both servers without the key and only the undenied one with it.
+
+Verified 2026-10-14 on Claude Code 2.1.300 on macOS.
+
+```sh
+bash tests/fm-claude-mcp-deny-live-e2e.test.sh
+```
+
+```
+ok - claude 2.1.300 (Claude Code): deniedMcpServers in --settings drops the denied MCP server and keeps the rest
+```
+
+The same version, run from a worktree of a repository whose main path has a local-scope `peekaboo` server, listed `peekaboo` in its init event without the key and omitted it with `{"deniedMcpServers":[{"serverName":"peekaboo"}]}`, while its claude.ai connectors and plugin servers stayed listed.
+An interactive worker launched there with Firstmate's crewmate settings plus that key started a second stdio MCP server passed through `--mcp-config` but no `peekaboo mcp serve` process, and the primary's existing `peekaboo mcp serve` process kept running.
+
+The guard submits no prompt and spends no tokens, so it runs by default wherever `claude` is installed; rerun it after every Claude Code upgrade.
+
 ## Worker account pin sign-in check
 
 `bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, and the provider column of `pi --list-models`.

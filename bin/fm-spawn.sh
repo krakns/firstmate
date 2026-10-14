@@ -394,6 +394,12 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
+# Worker MCP server deny list:
+#   docs/configuration.md "Worker MCP server deny list" owns
+#   config/worker-mcp-deny and its operator contract. Every non-raw claude
+#   launch (crewmate, scout, secondmate, relaunch) carries the listed names as
+#   a deniedMcpServers key in its --settings value; the __CLAUDESETTINGS__
+#   substitution below owns it. A malformed list refuses before provisioning.
 # Worker account pin (config/claude-account, config/pi-account):
 #   Opt-in. With no file, a Claude or Pi launch is unchanged: Claude still
 #   receives this process's own CLAUDE_CONFIG_DIR when it is set, and Pi the
@@ -2552,6 +2558,13 @@ fi
 EXCLUDE_TOOLS=
 if [ "$KIND" != secondmate ]; then
   EXCLUDE_TOOLS=$(fm_exclude_tools_check "$HARNESS" "$RAW_LAUNCH" "$CONFIG") || exit 1
+fi
+# config/worker-mcp-deny (header above): a claude-only settings key, so other
+# runtimes and a raw launch command never read the file.
+CLAUDE_MCP_DENY=
+if [ "$HARNESS" = claude ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+  CLAUDE_MCP_DENY=$(fm_worker_mcp_deny_json "$CONFIG") || exit 1
+  [ -z "$CLAUDE_MCP_DENY" ] || CLAUDE_MCP_DENY=",\"deniedMcpServers\":$CLAUDE_MCP_DENY"
 fi
 
 case "$HARNESS" in
@@ -4931,7 +4944,7 @@ BUSY_GEN=
       if [ "$KEEP_AI_TRAILERS" != 1 ]; then
         session_keys='"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false},'
       fi
-      printf '{%s%s}\n' "$session_keys" "$hooks_json" >"$STATE_REAL/$ID.claude-settings.json"
+      printf '{%s%s%s}\n' "$session_keys" "$hooks_json" "$CLAUDE_MCP_DENY" >"$STATE_REAL/$ID.claude-settings.json"
     else
       mkdir -p "$WT/.claude"
       printf '{%s}\n' "$hooks_json" >"$WT/.claude/settings.local.json"
@@ -5530,7 +5543,7 @@ case "$LAUNCH" in
   if [ "$KIND" = secondmate ]; then
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$STATE_REAL/$ID.claude-settings.json")}
   else
-    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION__}'"
+    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION__${CLAUDE_MCP_DENY}}'"
     LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$claude_settings}
   fi
   ;;

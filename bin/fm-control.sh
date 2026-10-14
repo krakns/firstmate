@@ -78,7 +78,8 @@
 #              agent stops.
 #              The same pre-stop refusal applies to this home's worker tool
 #              exclusions (bin/fm-exclude-tools-lib.sh): a malformed list, or a
-#              replacement runtime that cannot hide the listed tools.
+#              replacement runtime that cannot hide the listed tools, and to
+#              a malformed worker MCP deny list for a Claude replacement.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -966,6 +967,10 @@ resolve_relaunch_profile() {
   # agent stops. Secondmate agents are not covered.
   if [ "$KIND" != secondmate ]; then
     fm_exclude_tools_check "$TARGET_HARNESS" 0 "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null || return 1
+  fi
+  # And config/worker-mcp-deny, which every claude launch reads.
+  if [ "$TARGET_HARNESS" = claude ]; then
+    fm_worker_mcp_deny_json "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" >/dev/null || return 1
   fi
 }
 
